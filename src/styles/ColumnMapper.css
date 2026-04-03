@@ -1,0 +1,278 @@
+/**
+ * ColumnMapper.css - Estilos para el componente de mapeo de columnas
+ */
+
+.column-mapper-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.column-mapper-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  max-width: 900px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.mapper-header {
+  padding: 24px;
+  border-bottom: 2px solid #e0e0e0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 12px 12px 0 0;
+}
+
+.mapper-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.mapper-subtitle {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.mapper-filename {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.8;
+  font-family: 'Courier New', monospace;
+}
+
+.mapper-content {
+  padding: 24px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.mapper-section {
+  margin-bottom: 32px;
+}
+
+.mapper-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mapper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.mapper-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mapper-field label {
+  font-weight: 600;
+  color: #333;
+  font-size: 14px;
+}
+
+.field-description {
+  margin: 0;
+  font-size: 12px;
+  color: #999;
+  font-style: italic;
+}
+
+.mapper-select {
+  padding: 10px 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-family: inherit;
+}
+
+.mapper-select:hover {
+  border-color: #667eea;
+}
+
+.mapper-select:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.mapper-select.empty {
+  color: #999;
+  background-color: #f9f9f9;
+}
+
+.mapper-preview {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+}
+
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.preview-table th {
+  background: #667eea;
+  color: white;
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.preview-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 13px;
+}
+
+.preview-table tbody tr:hover {
+  background: #f9f9f9;
+}
+
+.mapped {
+  color: #4caf50;
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
+  background: #e8f5e9;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.unmapped {
+  color: #ff9800;
+  font-style: italic;
+}
+
+.mapper-errors {
+  margin-top: 24px;
+  padding: 16px;
+  background: #ffebee;
+  border-left: 4px solid #f44336;
+  border-radius: 6px;
+}
+
+.mapper-errors h4 {
+  margin: 0 0 8px 0;
+  color: #c62828;
+  font-size: 14px;
+}
+
+.mapper-errors ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.mapper-errors li {
+  color: #d32f2f;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.mapper-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e0e0e0;
+  background: #f9f9f9;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  border-radius: 0 0 12px 12px;
+}
+
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.btn-secondary:hover {
+  background: #d0d0d0;
+  transform: translateY(-2px);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .column-mapper-modal {
+    max-width: 100%;
+    border-radius: 8px;
+  }
+
+  .mapper-header {
+    padding: 16px;
+  }
+
+  .mapper-content {
+    padding: 16px;
+  }
+
+  .mapper-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mapper-header h2 {
+    font-size: 20px;
+  }
+
+  .mapper-footer {
+    flex-direction: column;
+  }
+
+  .btn {
+    width: 100%;
+  }
+}
