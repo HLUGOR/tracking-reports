@@ -32,6 +32,9 @@ const DEFAULT_PLATAFORMA_CONFIG = {
     duracion_pelicula_minutos: 120,
     categorias: ['serie_amazon_60min', 'pelicula_amazon_120min'],
   },
+  COMERCIALES: {
+    logica: 'logica_comerciales',
+  },
 };
 
 // Lógica por defecto para plataformas no configuradas explícitamente
@@ -75,7 +78,7 @@ class PlatformReportsEngine {
     // configurada por plataforma, usando la duración como clave de matching.
     const platformIdToName = {};
     platforms.forEach((p) => {
-      platformIdToName[p.id] = (p.name || '').trim().toUpperCase();
+      platformIdToName[String(p.id)] = (p.name || '').trim().toUpperCase();
     });
 
     // platformCategoryMap: NOMBRE_PLATAFORMA → [{id, name, duration, color}]
@@ -83,7 +86,7 @@ class PlatformReportsEngine {
     // mismo nombre (ej: "serie" 30min y "serie" 60min) acumulen en el mismo bucket.
     const platformCategoryMap = {};
     categories.forEach((c) => {
-      const platName = platformIdToName[c.platformId];
+      const platName = platformIdToName[String(c.platformId)];
       if (!platName) return;
       if (!platformCategoryMap[platName]) platformCategoryMap[platName] = [];
       platformCategoryMap[platName].push({
@@ -94,13 +97,21 @@ class PlatformReportsEngine {
       });
     });
 
+
     // Resuelve cualquier clave cruda al ID único de la categoría configurada para esa plataforma.
     // Usa DURACIÓN EXACTA como fuente de verdad — replica resolveToConfigured() de server.cjs.
     // Devuelve el ID de la categoría (string) para garantizar unicidad en byCategory.
-    const resolveCategoryForPlatform = (rawKey, durationMin, effectivePlatform) => {
-      const platCats = platformCategoryMap[effectivePlatform] || [];
+    const resolveCategoryForPlatform = (rawKey, durationMin, effectivePlatform, fallbackPlatform) => {
+      // Si la sub-plataforma (ej: BRAZIL) no tiene categorías propias, usar las del padre (ej: LATAM)
+      const platCats = (platformCategoryMap[effectivePlatform]?.length > 0
+        ? platformCategoryMap[effectivePlatform]
+        : platformCategoryMap[fallbackPlatform]) || [];
       if (platCats.length === 0) return rawKey;
       const numDur = Number(durationMin) || 0;
+      // Si rawKey ya es un ID válido de categoría de esta plataforma → usar directamente
+      const byId = platCats.find((c) => c.id === String(rawKey));
+      if (byId) return byId.id;
+
       if (numDur > 0) {
         const byDuration = platCats.find((c) => c.duration === numDur);
         if (byDuration) return byDuration.id; // ID único → sin colisión entre "serie 30" y "serie 60"
@@ -161,13 +172,25 @@ class PlatformReportsEngine {
         // Usar columna SEASON, no la librería de versiones
         classified = VersionMatcher.classifyBySeason(season, cfg);
       } else if (logica === 'iberia_especial') {
-        // Solo librería, SIN fallback: si no está registrada → no cuenta
-        classified = VersionMatcher.classify(version, versions, categories);
+        // Lógica independiente: usa mapa propio de IBERIA, sin depender del store.
+        // Si no está en el mapa → no cuenta (sin fallback).
+        classified = VersionMatcher.classifyIberia(version);
         if (!classified.registered) {
           unregisteredVersions.add(version);
           discardedRows.push({ row, reason: `IBERIA: versión no registrada: ${version}` });
           return;
         }
+      } else if (logica === 'logica_comerciales') {
+        // Lógica Comerciales: cuenta assets y acumula DURATION en timecode.
+        // No usa VERSION ni SEASON. DURATION está en formato HH:MM:SS o HH:MM:SS:FF.
+        const durationRaw = String(row.duration || row.DURATION || '').trim();
+        const durationSecs = PlatformReportsEngine.parseTimecode(durationRaw);
+        classified = {
+          category_key: null,
+          duration_minutes: durationSecs / 60,
+          duration_seconds: durationSecs,
+          isComerciales: true,
+        };
       } else {
         // logica_de_versiones: buscar en librería primero.
         // Si no está → fallback numérico por sufijo (replica Tracking_Project).
@@ -179,8 +202,9 @@ class PlatformReportsEngine {
         }
       }
 
-      // ── Solo contar si duration_minutes > 0 ──────────────────────────────
-      if (!classified || classified.duration_minutes <= 0) return;
+      // ── Solo contar si hay classified; para comerciales se permiten duraciones 0 ──
+      if (!classified) return;
+      if (!classified.isComerciales && classified.duration_minutes <= 0) return;
 
       const { category_key: rawCategoryKey, duration_minutes } = classified;
 
@@ -200,7 +224,8 @@ class PlatformReportsEngine {
       // 'unregistered' → busca la categoría de la plataforma con duración exacta.
       // Si ya coincide con una categoría de la plataforma → la deja igual.
       // Si no hay match → usa la key cruda (solo afecta a esa plataforma).
-      const category_key = resolveCategoryForPlatform(rawCategoryKey, duration_minutes, effectivePlatform);
+      // Pasa 'platform' como fallback: si BRAZIL no tiene categorías, usa las de LATAM
+      const category_key = resolveCategoryForPlatform(rawCategoryKey, duration_minutes, effectivePlatform, platform);
 
       // ── Acumular en platformMap ───────────────────────────────────────────
       if (!platformMap[effectivePlatform]) platformMap[effectivePlatform] = {};
@@ -210,25 +235,33 @@ class PlatformReportsEngine {
           byCategory: {},
           totalCount: 0,
           totalMinutes: 0,
+          totalSeconds: 0,
         };
       }
-      if (!platformMap[effectivePlatform][editor].byCategory[category_key]) {
-        platformMap[effectivePlatform][editor].byCategory[category_key] = { count: 0, minutes: 0 };
+      // Para logica_comerciales no acumulamos por categoría
+      if (category_key !== null) {
+        if (!platformMap[effectivePlatform][editor].byCategory[category_key]) {
+          platformMap[effectivePlatform][editor].byCategory[category_key] = { count: 0, minutes: 0 };
+        }
+        platformMap[effectivePlatform][editor].byCategory[category_key].count++;
+        platformMap[effectivePlatform][editor].byCategory[category_key].minutes += duration_minutes;
       }
-      platformMap[effectivePlatform][editor].byCategory[category_key].count++;
-      platformMap[effectivePlatform][editor].byCategory[category_key].minutes += duration_minutes;
       platformMap[effectivePlatform][editor].totalCount++;
       platformMap[effectivePlatform][editor].totalMinutes += duration_minutes;
+      platformMap[effectivePlatform][editor].totalSeconds += (classified.duration_seconds || 0);
     });
 
     // ── Construir output final ────────────────────────────────────────────
     const platformsResult = Object.entries(platformMap)
       .map(([platform, editorsObj]) => {
+        const cfg = plataformaConfig[platform];
+        const logica = cfg?.logica || DEFAULT_LOGICA;
         const editors = Object.values(editorsObj).sort(
           (a, b) => b.totalMinutes - a.totalMinutes
         );
         const totalCount = editors.reduce((s, e) => s + e.totalCount, 0);
         const totalMinutes = editors.reduce((s, e) => s + e.totalMinutes, 0);
+        const totalSeconds = editors.reduce((s, e) => s + (e.totalSeconds || 0), 0);
 
         // Totales por categoría (sumado de todos los editores)
         const totalByCategory = {};
@@ -240,17 +273,42 @@ class PlatformReportsEngine {
           });
         });
 
-        return { platform, editors, totalCount, totalMinutes, totalByCategory,
-          // Categorías configuradas para esta plataforma (orden definido en LibraryView).
-          // El frontend usa esta lista para los encabezados de columna, igual que
-          // platformData.categories en server.cjs → PlatformVersionReport.js.
-          // category_key es el ID único — el frontend lo usa para hacer lookup de label/color
-          categories: (platformCategoryMap[platform] || []).map((c) => ({
-            category_key: c.id,
-            label: c.name,
-            duration_minutes: c.duration,
-            color: c.color,
-          })),
+        // ── Construir lista de categorías según lógica ────────────────────
+        let categoriesResult;
+
+        if (logica === 'logica_sin_version') {
+          // Categorías vienen de la config estática, no del store.
+          // cfg.categorias = ['serie_45min', 'pelicula_120min'] (formato antiguo)
+          const cfgCats = cfg?.categorias || [];
+          const durSerie = cfg?.duracion_serie_minutos || 45;
+          const durPelicula = cfg?.duracion_pelicula_minutos || 120;
+          categoriesResult = cfgCats.map((cat, idx) => {
+            const isLast = idx === cfgCats.length - 1;
+            const dur = isLast ? durPelicula : durSerie;
+            // Extraer nombre legible: 'serie_45min' → 'serie', 'pelicula_120min' → 'pelicula'
+            const name = String(cat).replace(/_\d+min$/i, '').replace(/_/g, ' ');
+            return { category_key: cat, label: name, duration_minutes: dur, color: '#ccc' };
+          });
+        } else {
+          // Categorías del store (logica_de_versiones, iberia_especial, etc.)
+          const subPlatformParent = { 'BRAZIL': 'LATAM', 'LATAM': 'LATAM' };
+          const resolvedCatMap =
+            platformCategoryMap[platform]?.length > 0
+              ? platformCategoryMap[platform]
+              : platformCategoryMap[subPlatformParent[platform]] || [];
+
+          categoriesResult = resolvedCatMap.map((c) => {
+            let duration = c.duration || 0;
+            if (!duration) {
+              const m = (c.name || '').match(/(\d+)\s*(?:min)?\s*$/i);
+              if (m) duration = Number(m[1]);
+            }
+            return { category_key: c.id, label: c.name, duration_minutes: duration, color: c.color };
+          });
+        }
+
+        return { platform, logica, editors, totalCount, totalMinutes, totalSeconds, totalByCategory,
+          categories: categoriesResult,
         };
       })
       .sort((a, b) => b.totalMinutes - a.totalMinutes);
@@ -279,6 +337,22 @@ class PlatformReportsEngine {
    * @param {string|number} dateStr
    * @returns {Date|null}
    */
+  /**
+   * Parsea un timecode HH:MM:SS o HH:MM:SS:FF a segundos totales.
+   * @param {string} tc - timecode (ej: "00:01:30:00" o "00:01:30")
+   * @returns {number} segundos totales
+   */
+  static parseTimecode(tc) {
+    if (!tc) return 0;
+    const parts = String(tc).trim().split(':');
+    if (parts.length < 3) return 0;
+    const h = parseInt(parts[0], 10) || 0;
+    const m = parseInt(parts[1], 10) || 0;
+    const s = parseInt(parts[2], 10) || 0;
+    // parts[3] = frames → se ignora
+    return h * 3600 + m * 60 + s;
+  }
+
   static parseDate(dateStr) {
     if (!dateStr && dateStr !== 0) return null;
 

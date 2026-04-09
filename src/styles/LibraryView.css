@@ -10,8 +10,49 @@
 
 .library-header {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.library-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.lib-btn-export,
+.lib-btn-import {
+  padding: 0.45rem 1rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s;
+}
+
+.lib-btn-export {
+  background: #16a34a;
+  color: #fff;
+}
+
+.lib-btn-export:hover {
+  background: #15803d;
+}
+
+.lib-btn-import {
+  background: #2563eb;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+}
+
+.lib-btn-import:hover {
+  background: #1d4ed8;
 }
 
 .library-header h2 {

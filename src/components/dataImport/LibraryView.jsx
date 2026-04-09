@@ -51,8 +51,18 @@ function LibraryView() {
   const [reassignModal, setReassignModal] = useState(null);
   // { newPlatformId, newPlatformName, candidates: [{id, name, currentPlatformName}], selected: Set }
 
+  // Feedback post-creación de plataforma
+  const [savedPlatformInfo, setSavedPlatformInfo] = useState(null);
+  // { name, logica }
+
   // Import masivo de versiones desde Excel
   const [importResult, setImportResult] = useState(null);
+
+  // Mini-formulario inline para crear categoría desde el modal de versión
+  const [inlineNewCat, setInlineNewCat] = useState({ active: false, name: '', duration: 30 });
+
+  // Filtro de plataforma activo en el tab Categorías
+  const [filterCatPlatformId, setFilterCatPlatformId] = useState(null);
 
   const platforms = libraryStore((state) => state.platforms);
   const categories = libraryStore((state) => state.categories);
@@ -87,31 +97,12 @@ function LibraryView() {
     setFormData({});
     setEditingId(null);
 
-    // Si es logica_de_versiones, ofrecer reasignar versiones existentes de otras plataformas
-    if (formData.logica === 'logica_de_versiones' && newPlatform) {
-      const allVersions = libraryStore.getState().versions;
-      // Candidatas: versiones sin plataforma + versiones en otras plataformas con logica_de_versiones
-      const logicaVersionsPlatformIds = new Set(
-        libraryStore.getState().platforms
-          .filter((p) => p.id !== newPlatform.id && p.logica === 'logica_de_versiones')
-          .map((p) => p.id)
-      );
-      const candidates = allVersions
-        .filter((v) => !v.platformId || logicaVersionsPlatformIds.has(v.platformId))
-        .map((v) => {
-          const plt = libraryStore.getState().platforms.find((p) => p.id === v.platformId);
-          return { id: v.id, name: v.name, currentPlatformName: plt?.name || '(sin plataforma)' };
-        });
+    // Mostrar feedback contextual post-creación
+    setSavedPlatformInfo({ name: formData.name, logica: formData.logica });
 
-      if (candidates.length > 0) {
-        setReassignModal({
-          newPlatformId: newPlatform.id,
-          newPlatformName: newPlatform.name,
-          candidates,
-          selected: new Set(candidates.map((c) => c.id)), // pre-seleccionar todas
-        });
-      }
-    }
+    // Si es logica_de_versiones: la librería de versiones es GLOBAL (classify() busca por nombre,
+    // no filtra por platformId). Las versiones existentes ya funcionan para esta nueva plataforma
+    // automáticamente sin necesidad de reasignar. No se muestra modal.
   };
 
   const handleDeletePlatform = (id) => {
@@ -130,10 +121,41 @@ function LibraryView() {
   const handleSaveCategory = () => {
     if (!formData.name || !formData.platformId) return;
 
+    const isNew = !editingId;
+
     if (editingId) {
       libraryStore.getState().updateCategory(editingId, formData);
     } else {
       libraryStore.getState().addCategory(formData);
+    }
+
+    // Auto-asignar versiones si es categoría nueva
+    if (isNew && formData.duration) {
+      const state = libraryStore.getState();
+      
+      // Obtener la categoría recién creada
+      const newCategory = state.categories.find(
+        (c) => c.name === formData.name && c.platformId === formData.platformId
+      );
+      
+      if (newCategory) {
+        // Asignar versiones que coincidan por duración y plataforma
+        const updatedVersions = state.versions.map((v) => {
+          if (v.categoryId) return v; // Ya tiene categoría
+          
+          // Buscar coincidencia por duración + platformId
+          if (Number(v.duration) === Number(newCategory.duration) && v.platformId === newCategory.platformId) {
+            return { ...v, categoryId: newCategory.id, duration: newCategory.duration };
+          }
+          return v;
+        });
+        
+        // Actualizar si hubo cambios
+        const hasChanges = updatedVersions.some((v, i) => v.categoryId !== state.versions[i].categoryId);
+        if (hasChanges) {
+          state.setVersions(updatedVersions);
+        }
+      }
     }
 
     setShowForm(false);
@@ -144,6 +166,105 @@ function LibraryView() {
   const handleDeleteCategory = (id) => {
     if (window.confirm('¿Eliminar esta categoría y sus versiones asociadas?')) {
       libraryStore.getState().deleteCategory(id);
+    }
+  };
+
+  // ── PARCHE DE DATOS IBERIA ────────────────────────────────────────────────
+  // NOTA DE MANTENIMIENTO: Esta función corrige versiones/categorías de IBERIA que
+  // quedaron con duration:30 por una importación incorrecta (abril 2026).
+  // La lógica de reporte ya NO depende del store para IBERIA (usa VersionMatcher.IBERIA_DURATION_MAP).
+  // Si en el futuro las versiones de IBERIA vuelven a mostrarse con datos incorrectos
+  // en la tab Versiones (N/A, 30min), ejecutar esta función desde la consola:
+  //   window.__repairIberia && window.__repairIberia()
+  // o reactivar el botón temporalmente (ver LibraryView línea ~185).
+  const handleRepairIberia = () => {
+    const state = libraryStore.getState();
+    const iberiaPlatform = state.platforms.find(p => (p.name || '').toUpperCase() === 'IBERIA');
+    if (!iberiaPlatform) { alert('Plataforma IBERIA no encontrada.'); return; }
+
+    // Paso 1: Corregir duración de las categorías de IBERIA por nombre
+    // "serie 60" → 60 min, "pelicula 120" → 120 min
+    const CAT_DURATION_BY_NAME = {
+      'serie 60': 60,
+      'pelicula 120': 120,
+    };
+    const iberiaCategories = state.categories.filter(c => c.platformId === iberiaPlatform.id);
+    iberiaCategories.forEach((cat) => {
+      const correctDur = CAT_DURATION_BY_NAME[(cat.name || '').toLowerCase().trim()];
+      if (correctDur && Number(cat.duration) !== correctDur) {
+        libraryStore.getState().updateCategory(cat.id, { duration: correctDur });
+      }
+    });
+
+    // Paso 2: Leer categorías ya corregidas
+    const freshState = libraryStore.getState();
+    const freshIberiaCats = freshState.categories.filter(c => c.platformId === iberiaPlatform.id);
+
+    let fixed = 0;
+    const updatedVersions = freshState.versions.map((v) => {
+      const trimmed = (v.name || '').trim();
+      // Búsqueda case-insensitive contra el mapa centralizado en VersionMatcher
+      const entry = Object.entries(VersionMatcher.IBERIA_DURATION_MAP).find(
+        ([name]) => name.toLowerCase() === trimmed.toLowerCase()
+      );
+      if (!entry) return v;
+      const correctDuration = entry[1];
+
+      const correctCat = freshIberiaCats.find(c => Number(c.duration) === correctDuration);
+      if (!correctCat) return v;
+
+      fixed++;
+      return { ...v, duration: correctDuration, categoryId: correctCat.id, platformId: iberiaPlatform.id };
+    });
+
+    freshState.setVersions(updatedVersions);
+    alert(`✅ ${fixed} versiones IBERIA reparadas con duraciones y categorías correctas.`);
+  };
+  // Exponer en window para uso desde consola (no hay botón visible)
+  if (typeof window !== 'undefined') window.__repairIberia = handleRepairIberia;
+
+  // ── VALIDADOR DE LIBRERÍA ─────────────────────────────────────────────────
+  // Revisa que todas las versiones tengan platformId, categoryId y duration válidos.
+  // Para IBERIA también verifica que el nombre esté en el mapa de classifyIberia.
+  const handleValidateLibrary = () => {
+    const state = libraryStore.getState();
+    const issues = [];
+
+    // Mapa plataforma id → logica
+    const platLogicaMap = {};
+    state.platforms.forEach(p => { platLogicaMap[p.id] = p.logica || 'logica_de_versiones'; });
+    const platNameMap = {};
+    state.platforms.forEach(p => { platNameMap[p.id] = p.name; });
+
+    state.versions.forEach((v) => {
+      const platName = platNameMap[v.platformId] || 'SIN PLATAFORMA';
+      if (!v.platformId) {
+        issues.push(`❌ "${v.name}" — sin plataforma asignada`);
+      }
+      if (!v.categoryId) {
+        issues.push(`⚠️ "${v.name}" (${platName}) — sin categoría asignada`);
+      }
+      if (!v.duration || Number(v.duration) <= 0) {
+        issues.push(`⚠️ "${v.name}" (${platName}) — duración 0 o no definida`);
+      }
+      // Validación específica IBERIA
+      if (platName.toUpperCase() === 'IBERIA') {
+        const inMap = VersionMatcher.IBERIA_DURATION_MAP[v.name.trim()];
+        if (!inMap) {
+          issues.push(`🔴 "${v.name}" (IBERIA) — no está en el mapa de versiones IBERIA (no se contará en el reporte)`);
+        } else if (inMap !== Number(v.duration)) {
+          issues.push(`🟡 "${v.name}" (IBERIA) — duration en store: ${v.duration}min, esperada: ${inMap}min (no afecta el reporte)`);
+        }
+      }
+    });
+
+    if (issues.length === 0) {
+      alert('✅ Librería válida — todas las versiones tienen plataforma, categoría y duración correctas.');
+    } else {
+      alert(`⚠️ Se encontraron ${issues.length} problema(s):\n\n${issues.slice(0, 20).join('\n')}${
+        issues.length > 20 ? `\n...y ${issues.length - 20} más (ver consola)` : ''
+      }`);
+      console.table(issues);
     }
   };
 
@@ -165,12 +286,15 @@ function LibraryView() {
 
     // 3. Construir nuevo array con categoryId y duration correctos para cada versión
     const updatedVersions = freshState.versions.map((v) => {
-      const trueDuration = VersionMatcher.detectDurationFromSuffix(v.name);
+      // Usar duración almacenada si existe; si no, detectar por sufijo (LATAM/BRA)
+      const storedDuration = Number(v.duration) > 0 ? Number(v.duration) : null;
+      const trueDuration = storedDuration ?? VersionMatcher.detectDurationFromSuffix(v.name);
       durations[trueDuration] = (durations[trueDuration] || 0) + 1;
 
-      const match =
-        allCategories.find((c) => Number(c.duration) === trueDuration && c.platformId === v.platformId) ||
-        allCategories.find((c) => Number(c.duration) === trueDuration);
+      // Solo buscar dentro de la misma plataforma (sin fallback cross-platform)
+      const match = allCategories.find(
+        (c) => Number(c.duration) === trueDuration && c.platformId === v.platformId
+      );
 
       if (match) {
         assigned++;
@@ -208,6 +332,7 @@ function LibraryView() {
     setShowForm(false);
     setFormData({});
     setEditingId(null);
+    setInlineNewCat({ active: false, name: '', duration: 30 });
   };
 
   // ===== IMPORT MASIVO DE VERSIONES =====
@@ -240,13 +365,20 @@ function LibraryView() {
         let skipped = 0;
         const errors = [];
 
+        let updated = 0;
+
         dataRows.forEach((row, idx) => {
           const name = String(row[0] || '').trim();
           if (!name) { skipped++; return; }
-          if (existingNames.has(name.toLowerCase())) { skipped++; return; }
 
-          // Duración por sufijo (igual que VersionMatcher.detectDurationFromSuffix)
-          const duration = detectDurationFromName(name);
+          // Duración: columna D (índice 3) tiene prioridad si es un número válido;
+          // de lo contrario se detecta por sufijo numérico del nombre.
+          const explicitDuration = row[3] !== undefined && row[3] !== '' ? parseInt(row[3], 10) : NaN;
+          const duration = !isNaN(explicitDuration) && explicitDuration > 0
+            ? explicitDuration
+            : detectDurationFromName(name);
+          
+
 
           // Categoría opcional (columna B, índice 1)
           const catName = String(row[1] || '').trim();
@@ -268,16 +400,36 @@ function LibraryView() {
             platformId = foundPlt?.id || null;
           }
 
+          // Si ya existe: actualizar duración/plataforma si el Excel trae datos explícitos
+          const existing = state.versions.find(
+            (v) => (v.name || '').trim().toLowerCase() === name.toLowerCase()
+          );
+
           try {
-            state.addVersion({ name, duration, categoryId, platformId });
-            existingNames.add(name.toLowerCase());
-            created++;
+            if (existing) {
+              const needsUpdate =
+                (!isNaN(explicitDuration) && explicitDuration > 0 && existing.duration !== duration) ||
+                (platformId !== null && existing.platformId !== platformId);
+              if (needsUpdate) {
+                const updates = {};
+                if (!isNaN(explicitDuration) && explicitDuration > 0) updates.duration = duration;
+                if (platformId !== null) updates.platformId = platformId;
+                state.updateVersion(existing.id, updates);
+                updated++;
+              } else {
+                skipped++;
+              }
+            } else {
+              state.addVersion({ name, duration, categoryId, platformId });
+              existingNames.add(name.toLowerCase());
+              created++;
+            }
           } catch (err) {
             errors.push(`Fila ${idx + 2}: ${name} — ${err.message}`);
           }
         });
 
-        setImportResult({ total: dataRows.length, created, skipped, errors });
+        setImportResult({ total: dataRows.length, created, updated, skipped, errors });
       } catch (err) {
         setImportResult({ total: 0, created: 0, skipped: 0, errors: [`Error leyendo archivo: ${err.message}`] });
       }
@@ -294,11 +446,71 @@ function LibraryView() {
   const getPlatformName = (id) => platforms.find((p) => p.id === id)?.name || 'N/A';
   const getCategoryName = (id) => categories.find((c) => c.id === id)?.name || 'N/A';
 
+  // ===== EXPORT / IMPORT LIBRERÍA =====
+  const handleExportLibrary = () => {
+    const data = libraryStore.getState().exportLibraryData();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `libreria_tracking_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportLibrary = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data.platforms || !data.categories || !data.versions) {
+          alert('Archivo inválido: debe contener platforms, categories y versions.');
+          return;
+        }
+        if (window.confirm(`¿Importar librería?\n\nEsto reemplazará tu librería actual con:\n• ${data.platforms.length} plataformas\n• ${data.categories.length} categorías\n• ${data.versions.length} versiones`)) {
+          libraryStore.getState().importLibraryData(data);
+          alert('✅ Librería importada correctamente.');
+        }
+      } catch {
+        alert('Error al leer el archivo JSON.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   return (
     <div className="library-view">
       <div className="library-header">
-        <h2>📚 Librería de Datos</h2>
-        <p>Gesiona plataformas, categorías, versiones y duraciones</p>
+        <div>
+          <h2>📚 Librería de Datos</h2>
+          <p>Gesiona plataformas, categorías, versiones y duraciones</p>
+        </div>
+        <div className="library-header-actions">
+          <button
+            className="lib-btn-export"
+            onClick={handleExportLibrary}
+            title="💾 Hacer Respaldo&#10;Descarga toda la librería (plataformas, categorías y versiones) como archivo .json.&#10;Úsalo para guardar tu configuración o migrarla a otro dispositivo."
+          >
+            💾 Hacer Respaldo
+          </button>
+          <label
+            className="lib-btn-import"
+            title="♻️ Restaurar Respaldo&#10;Carga un archivo .json generado previamente con 'Hacer Respaldo'.&#10;Reemplaza completamente la librería actual (plataformas, categorías y versiones)."
+            style={{ cursor: 'pointer' }}
+          >
+            ♻️ Restaurar Respaldo
+            <input
+              type="file"
+              accept=".json"
+              style={{ display: 'none' }}
+              onChange={handleImportLibrary}
+            />
+          </label>
+        </div>
       </div>
 
       <div className="library-tabs">
@@ -311,12 +523,18 @@ function LibraryView() {
         <button
           className={`tab-btn ${activeTab === 'categories' ? 'active' : ''}`}
           onClick={() => setActiveTab('categories')}
+          title="Solo para logica_de_versiones e iberia_especial"
         >
           📂 Categorías ({categories.length})
+          {platforms.some(p => p.logica === 'logica_de_versiones' || p.logica === 'iberia_especial') &&
+            !categories.some(c => platforms.find(p => (p.logica === 'logica_de_versiones' || p.logica === 'iberia_especial') && p.id === c.platformId)) &&
+            <span style={{ marginLeft: '4px', fontSize: '0.7rem', color: '#dc2626' }}>⚠</span>
+          }
         </button>
         <button
           className={`tab-btn ${activeTab === 'versions' ? 'active' : ''}`}
           onClick={() => setActiveTab('versions')}
+          title="Solo para logica_de_versiones e iberia_especial"
         >
           📦 Versiones ({versions.length})
         </button>
@@ -339,6 +557,49 @@ function LibraryView() {
               </button>
             </div>
 
+            {/* Feedback card post-creación */}
+            {savedPlatformInfo && (() => {
+              const l = savedPlatformInfo.logica;
+              const isSelfContained = l === 'logica_sin_version' || l === 'logica_comerciales';
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '0.75rem',
+                  background: isSelfContained ? '#f0fdf4' : '#fffbeb',
+                  border: `1px solid ${isSelfContained ? '#86efac' : '#fde68a'}`,
+                  borderRadius: '8px', padding: '0.85rem 1rem', marginBottom: '1rem',
+                  fontSize: '0.875rem',
+                }}>
+                  <span style={{ fontSize: '1.3rem', lineHeight: 1 }}>{isSelfContained ? '✅' : '⚙️'}</span>
+                  <div style={{ flex: 1 }}>
+                    <strong style={{ color: isSelfContained ? '#15803d' : '#92400e' }}>
+                      {isSelfContained
+                        ? `Plataforma "${savedPlatformInfo.name}" lista para usar`
+                        : `Plataforma "${savedPlatformInfo.name}" creada — requiere configuración`}
+                    </strong>
+                    <p style={{ margin: '0.25rem 0 0', color: isSelfContained ? '#166534' : '#78350f', lineHeight: 1.5 }}>
+                      {l === 'logica_sin_version' && 'Clasifica por columna SEASON automáticamente. No necesita Categorías ni Versiones.'}
+                      {l === 'logica_comerciales' && 'Cuenta assets y acumula DURATION. No necesita Categorías ni Versiones.'}
+                      {(l === 'logica_de_versiones' || l === 'iberia_especial') && (
+                        <>Siguiente paso: ve a <strong>📂 Categorías</strong> para crear las categorías de esta plataforma, luego a <strong>📦 Versiones</strong> para registrar las versiones disponibles.</>
+                      )}
+                    </p>
+                  </div>
+                  {(l === 'logica_de_versiones' || l === 'iberia_especial') && (
+                    <button
+                      onClick={() => { setSavedPlatformInfo(null); setActiveTab('categories'); }}
+                      style={{ padding: '0.35rem 0.75rem', borderRadius: '6px', border: '1px solid #d97706', background: '#fef3c7', color: '#92400e', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                    >
+                      Ir a Categorías →
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setSavedPlatformInfo(null)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: '#94a3b8', padding: '0 0.2rem' }}
+                  >✕</button>
+                </div>
+              );
+            })()}
+
             {platforms.length === 0 ? (
               <div className="empty-state">
                 <p>Sin plataformas aún. Crea una para empezar.</p>
@@ -351,11 +612,15 @@ function LibraryView() {
                       <th>Nombre</th>
                       <th>Lógica</th>
                       <th>Estado</th>
+                      <th>Config</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {platforms.map((p) => (
+                    {platforms.map((p) => {
+                      const isSelfContained = p.logica === 'logica_sin_version' || p.logica === 'logica_comerciales';
+                      const hasCats = categories.some((c) => c.platformId === p.id);
+                      return (
                       <tr key={p.id}>
                         <td>{p.name}</td>
                         <td>
@@ -365,6 +630,14 @@ function LibraryView() {
                           <span className={`status ${p.active ? 'active' : 'inactive'}`}>
                             {p.active ? '✓ Activa' : '✗ Inactiva'}
                           </span>
+                        </td>
+                        <td>
+                          {isSelfContained
+                            ? <span style={{ fontSize: '0.78rem', color: '#15803d', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '2px 8px', whiteSpace: 'nowrap' }}>✓ Lista</span>
+                            : hasCats
+                              ? <span style={{ fontSize: '0.78rem', color: '#1d4ed8', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '4px', padding: '2px 8px', whiteSpace: 'nowrap' }}>✓ Con categorías</span>
+                              : <button onClick={() => { setSavedPlatformInfo(null); setFilterCatPlatformId(p.id); setActiveTab('categories'); }} style={{ fontSize: '0.78rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>⚠ Configurar →</button>
+                          }
                         </td>
                         <td className="actions">
                           <button
@@ -385,7 +658,8 @@ function LibraryView() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -396,21 +670,99 @@ function LibraryView() {
         {/* CATEGORÍAS */}
         {activeTab === 'categories' && (
           <div className="tab-panel">
+            {/* Banner: qué plataformas aplican aquí */}
+            {(() => {
+              const versionPlats = platforms.filter(p => p.logica === 'logica_de_versiones' || p.logica === 'iberia_especial');
+              const sinVersionPlats = platforms.filter(p => p.logica === 'logica_sin_version' || p.logica === 'logica_comerciales');
+              if (platforms.length === 0) return null;
+              return (
+                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '0.7rem 1rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#0c4a6e', lineHeight: 1.6 }}>
+                  <strong>📂 Categorías aplican a:</strong>{' '}
+                  {versionPlats.length > 0
+                    ? <><span style={{ color: '#1d4ed8', fontWeight: 600 }}>{versionPlats.map(p => p.name).join(', ')}</span> — clasifica por versión, requiere categorías configuradas aquí.</>                    
+                    : <span style={{ color: '#94a3b8' }}>Ninguna plataforma activa usa esta configuración.</span>
+                  }
+                  {sinVersionPlats.length > 0 && (
+                    <div style={{ marginTop: '0.3rem', color: '#64748b' }}>
+                      {sinVersionPlats.map(p => p.name).join(', ')} ({sinVersionPlats.map(p => p.logica).filter((v,i,a)=>a.indexOf(v)===i).join(', ')}) — <strong>no necesitan categorías aquí</strong>, ya están auto-configuradas.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            {/* Filtro de plataforma */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 500 }}>Filtrar por plataforma:</span>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setFilterCatPlatformId(null)}
+                  style={{
+                    fontSize: '0.78rem', padding: '3px 10px', borderRadius: '12px', cursor: 'pointer',
+                    border: `1px solid ${filterCatPlatformId === null ? '#1d4ed8' : '#cbd5e1'}`,
+                    background: filterCatPlatformId === null ? '#eff6ff' : '#f8fafc',
+                    color: filterCatPlatformId === null ? '#1d4ed8' : '#475569',
+                    fontWeight: filterCatPlatformId === null ? 600 : 400,
+                  }}
+                >Todas</button>
+                {platforms
+                  .filter(p => p.logica === 'logica_de_versiones' || p.logica === 'iberia_especial')
+                  .map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => setFilterCatPlatformId(p.id)}
+                      style={{
+                        fontSize: '0.78rem', padding: '3px 10px', borderRadius: '12px', cursor: 'pointer',
+                        border: `1px solid ${filterCatPlatformId === p.id ? '#1d4ed8' : '#cbd5e1'}`,
+                        background: filterCatPlatformId === p.id ? '#eff6ff' : '#f8fafc',
+                        color: filterCatPlatformId === p.id ? '#1d4ed8' : '#475569',
+                        fontWeight: filterCatPlatformId === p.id ? 600 : 400,
+                      }}
+                    >{p.name}</button>
+                  ))}
+              </div>
+            </div>
+
             <div className="panel-header">
-              <h3>Categorías</h3>
+              <h3>
+                Categorías
+                {filterCatPlatformId && (
+                  <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', fontWeight: 400, color: '#1d4ed8', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '4px', padding: '2px 8px' }}>
+                    {platforms.find(p => p.id === filterCatPlatformId)?.name}
+                  </span>
+                )}
+              </h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {/* 🔧 Reparar IBERIA — botón oculto. Usar window.__repairIberia() desde consola si es necesario */}
                 <button className="btn btn-secondary" onClick={handleAutoAssignVersions}>
                   🔗 Auto-asignar versiones
                 </button>
-                <button className="btn btn-primary" onClick={handleAddCategory}>
+                <button className="btn btn-primary" onClick={() => {
+                  setEditingId(null);
+                  setFormData({ platformId: filterCatPlatformId || platforms[0]?.id || null });
+                  setShowForm(true);
+                }}>
                   ➕ Nueva Categoría
                 </button>
               </div>
             </div>
 
-            {categories.length === 0 ? (
+            {categories.filter(c => filterCatPlatformId === null || c.platformId === filterCatPlatformId).length === 0 ? (
               <div className="empty-state">
-                <p>Sin categorías aún. Crea una plataforma primero.</p>
+                {filterCatPlatformId
+                  ? <p>
+                      <strong>{platforms.find(p => p.id === filterCatPlatformId)?.name}</strong> no tiene categorías aún.{' '}
+                      <button
+                        className="btn btn-primary"
+                        style={{ marginTop: '0.5rem' }}
+                        onClick={() => {
+                          setEditingId(null);
+                          setFormData({ platformId: filterCatPlatformId });
+                          setShowForm(true);
+                        }}
+                      >➕ Crear primera categoría</button>
+                    </p>
+                  : <p>Sin categorías aún. Crea una plataforma primero.</p>
+                }
               </div>
             ) : (
               <div className="table-container">
@@ -426,16 +778,18 @@ function LibraryView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {categories.map((c) => {
-                      const catVersions = versions.filter((v) => v.categoryId === c.id);
-                      const durGroups = {};
-                      catVersions.forEach((v) => {
-                        const d = v.duration || '?';
-                        durGroups[d] = (durGroups[d] || 0) + 1;
-                      });
-                      const durSummary = Object.entries(durGroups)
-                        .map(([d, n]) => `${n}×${d}min`)
-                        .join(', ');
+                    {categories.filter(c => filterCatPlatformId === null || c.platformId === filterCatPlatformId).map((c) => {
+                      const catPlatform = platforms.find((p) => p.id === c.platformId);
+                      const platLogica = catPlatform?.logica || 'logica_de_versiones';
+                      const isVersionless = platLogica === 'logica_sin_version' || platLogica === 'logica_comerciales';
+
+                      // Versiones directamente ligadas a esta categoría (por categoryId)
+                      const ownVersions = versions.filter((v) => v.categoryId === c.id);
+                      // Versiones en la librería global con la misma duración (para mostrar disponibilidad)
+                      const globalMatching = c.duration
+                        ? versions.filter((v) => Number(v.duration) === Number(c.duration))
+                        : [];
+
                       return (
                       <tr key={c.id}>
                         <td>{c.name}</td>
@@ -446,9 +800,17 @@ function LibraryView() {
                             : <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>—</span>}
                         </td>
                         <td style={{ fontSize: '0.82rem', color: '#475569' }}>
-                          {catVersions.length === 0
-                            ? <span style={{ color: '#94a3b8' }}>Sin versiones</span>
-                            : <><strong>{catVersions.length}</strong> versión{catVersions.length !== 1 ? 'es' : ''}{durSummary ? ` — ${durSummary}` : ''}</>}
+                          {isVersionless ? (
+                            <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>No aplica — usa SEASON</span>
+                          ) : ownVersions.length > 0 ? (
+                            <><strong>{ownVersions.length}</strong> versiones registradas{c.duration ? ` · ${c.duration} min c/u` : ''}</>
+                          ) : globalMatching.length > 0 ? (
+                            <span style={{ color: '#6366f1' }} title="Versiones de la librería global que coinciden por duración — la clasificación funciona automáticamente">
+                              <strong>{globalMatching.length}</strong> en librería global · {c.duration} min
+                            </span>
+                          ) : (
+                            <span style={{ color: '#f59e0b' }}>Sin versiones</span>
+                          )}
                         </td>
                         <td>
                           <div
@@ -490,10 +852,21 @@ function LibraryView() {
             <div className="panel-header">
               <h3>Versiones</h3>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <label className="btn btn-secondary" style={{ cursor: 'pointer', margin: 0 }}>
-                  📥 Importar Excel
+                <label
+                  className="btn btn-secondary"
+                  style={{ cursor: 'pointer', margin: 0 }}
+                  title="📥 Cargar Versiones (.xlsx)&#10;Agrega versiones en lote desde un archivo Excel.&#10;Columnas: A=Nombre, B=Categoría (opcional), C=Plataforma (opcional), D=Duración en minutos (opcional).&#10;Si la duración está vacía, se detecta automáticamente por el sufijo del nombre."
+                >
+                  📥 Cargar Versiones (.xlsx)
                   <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleImportVersions} />
                 </label>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleValidateLibrary}
+                  title="Valida que todas las versiones tengan plataforma, categoría y duración correctas. Para IBERIA verifica que estén en el mapa de versiones registradas."
+                >
+                  🔍 Validar librería
+                </button>
                 <button className="btn btn-primary" onClick={handleAddVersion}>➕ Nueva Versión</button>
               </div>
             </div>
@@ -507,8 +880,9 @@ function LibraryView() {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>
-                    ✅ <strong>{importResult.created}</strong> versiones creadas &nbsp;·&nbsp;
-                    ⏭ <strong>{importResult.skipped}</strong> omitidas (ya existían)
+                    ✅ <strong>{importResult.created}</strong> versiones creadas
+                    {importResult.updated > 0 && <> &nbsp;·&nbsp; 🔄 <strong>{importResult.updated}</strong> actualizadas</>}
+                    &nbsp;·&nbsp; ⏭ <strong>{importResult.skipped}</strong> sin cambios
                     {importResult.errors.length > 0 && <> &nbsp;·&nbsp; ❌ <strong>{importResult.errors.length}</strong> errores</>}
                   </span>
                   <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }} onClick={() => setImportResult(null)}>✕</button>
@@ -521,17 +895,26 @@ function LibraryView() {
               </div>
             )}
 
-            {/* Aviso si hay plataformas logica_sin_version */}
-            {platforms.some((p) => p.logica === 'logica_sin_version') && (
-              <div style={{
-                background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px',
-                padding: '0.6rem 1rem', marginBottom: '0.75rem', fontSize: '0.82rem', color: '#92400e'
-              }}>
-                ⚠️ Las plataformas con lógica <strong>logica_sin_version</strong> (
-                {platforms.filter((p) => p.logica === 'logica_sin_version').map((p) => p.name).join(', ')}
-                ) no usan versiones — clasifican por columna SEASON. Las versiones aquí solo aplican a plataformas con <strong>logica_de_versiones</strong> o <strong>iberia_especial</strong>.
-              </div>
-            )}
+            {/* Banner: qué plataformas aplican aquí */}
+            {(() => {
+              const versionPlats = platforms.filter(p => p.logica === 'logica_de_versiones' || p.logica === 'iberia_especial');
+              const excludedPlats = platforms.filter(p => p.logica === 'logica_sin_version' || p.logica === 'logica_comerciales');
+              if (platforms.length === 0) return null;
+              return (
+                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '0.7rem 1rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#0c4a6e', lineHeight: 1.6 }}>
+                  <strong>📦 Versiones aplican a:</strong>{' '}
+                  {versionPlats.length > 0
+                    ? <><span style={{ color: '#1d4ed8', fontWeight: 600 }}>{versionPlats.map(p => p.name).join(', ')}</span> — cada versión debe estar registrada aquí para clasificar correctamente.</>                    
+                    : <span style={{ color: '#94a3b8' }}>Ninguna plataforma activa usa versiones.</span>
+                  }
+                  {excludedPlats.length > 0 && (
+                    <div style={{ marginTop: '0.3rem', color: '#64748b' }}>
+                      {excludedPlats.map(p => p.name).join(', ')} — <strong>no necesitan versiones</strong>. Clasifican por SEASON o acumulan DURATION directamente.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {versions.length === 0 ? (
               <div className="empty-state">
@@ -675,46 +1058,85 @@ function LibraryView() {
                   <option value="logica_de_versiones">logica_de_versiones — clasifica por VERSION (librería)</option>
                   <option value="logica_sin_version">logica_sin_version — clasifica por SEASON (sin librería)</option>
                   <option value="iberia_especial">iberia_especial — como versiones, sin fallback</option>
+                  <option value="logica_comerciales">logica_comerciales — cuenta assets y acumula DURATION</option>
                 </select>
 
                 {/* Campos extra solo para logica_sin_version */}
                 {formData.logica === 'logica_sin_version' && (
                   <>
-                    <small style={{ color: '#64748b', fontSize: '0.8rem', margin: '4px 0' }}>
-                      ℹ️ Esta lógica clasifica por columna SEASON. Define las duraciones y keys de categoría:
+                    <small style={{ color: '#64748b', fontSize: '0.8rem', margin: '8px 0' }}>
+                      ℹ️ Esta lógica clasifica por columna SEASON. Agregá N cantidad de categorías con sus duraciones:
                     </small>
-                    <input
-                      type="number"
-                      placeholder="Duración SERIE (minutos, ej: 45)"
-                      value={formData.duracion_serie_minutos || ''}
-                      onChange={(e) => setFormData({ ...formData, duracion_serie_minutos: parseInt(e.target.value) })}
-                    />
-                    <input
-                      type="number"
-                      placeholder="Duración PELÍCULA (minutos, ej: 120)"
-                      value={formData.duracion_pelicula_minutos || ''}
-                      onChange={(e) => setFormData({ ...formData, duracion_pelicula_minutos: parseInt(e.target.value) })}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Key categoría SERIE (ej: serie_45min)"
-                      value={(formData.categorias && formData.categorias[0]) || ''}
-                      onChange={(e) => {
-                        const cats = [...(formData.categorias || ['', ''])];
-                        cats[0] = e.target.value;
+                    
+                    {/* Lista de categorías dinámicas */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', margin: '0.75rem 0', padding: '0.75rem', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                      {(formData.categorias || []).map((cat, idx) => (
+                        <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <label style={{ fontSize: '0.75rem', color: '#475569', fontWeight: 500 }}>
+                              📌 Key {idx + 1}
+                            </label>
+                            <input
+                              type="text"
+                              placeholder={idx === 0 ? "Ej: serie_45min" : idx === 1 ? "Ej: pelicula_120min" : "Ej: especial_90min"}
+                              value={cat?.key || ''}
+                              onChange={(e) => {
+                                const cats = [...(formData.categorias || [])];
+                                cats[idx] = { ...cat, key: e.target.value };
+                                setFormData({ ...formData, categorias: cats });
+                              }}
+                              style={{ padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '100px' }}>
+                            <label style={{ fontSize: '0.75rem', color: '#475569', fontWeight: 500 }}>
+                              ⏱ Duración (min)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="Ej: 45"
+                              value={cat?.duration || ''}
+                              onChange={(e) => {
+                                const cats = [...(formData.categorias || [])];
+                                cats[idx] = { ...cat, duration: e.target.value ? parseInt(e.target.value) : '' };
+                                setFormData({ ...formData, categorias: cats });
+                              }}
+                              style={{ padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cats = formData.categorias.filter((_, i) => i !== idx);
+                              setFormData({ ...formData, categorias: cats });
+                            }}
+                            style={{
+                              padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #fca5a5', background: '#fee2e2',
+                              color: '#dc2626', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500, minWidth: '60px'
+                            }}
+                          >
+                            🗑️ Eliminar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Botón agregar categoría */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cats = [...(formData.categorias || [])];
+                        cats.push({ key: '', duration: '' });
                         setFormData({ ...formData, categorias: cats });
                       }}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Key categoría PELÍCULA (ej: pelicula_120min)"
-                      value={(formData.categorias && formData.categorias[1]) || ''}
-                      onChange={(e) => {
-                        const cats = [...(formData.categorias || ['', ''])];
-                        cats[1] = e.target.value;
-                        setFormData({ ...formData, categorias: cats });
+                      style={{
+                        padding: '0.5rem 0.75rem', borderRadius: '4px', border: '1px dashed #3b82f6', background: '#eff6ff',
+                        color: '#1d4ed8', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500, width: '100%', marginBottom: '0.5rem'
                       }}
-                    />
+                    >
+                      ➕ Agregar otra categoría
+                    </button>
                   </>
                 )}
               </>
@@ -830,19 +1252,85 @@ function LibraryView() {
                     </option>
                   ))}
                 </select>
+                {/* Selector de categoría + creación inline */}
                 <select
-                  value={formData.categoryId || ''}
-                  onChange={(e) => setFormData({ ...formData, categoryId: parseInt(e.target.value) })}
+                  value={inlineNewCat.active ? '__new__' : (formData.categoryId || '')}
+                  onChange={(e) => {
+                    if (e.target.value === '__new__') {
+                      setInlineNewCat({ active: true, name: '', duration: formData.duration || 30 });
+                    } else {
+                      setInlineNewCat({ active: false, name: '', duration: 30 });
+                      setFormData({ ...formData, categoryId: parseInt(e.target.value) });
+                    }
+                  }}
                 >
                   <option value="">Selecciona una categoría</option>
                   {categories
                     .filter((c) => !formData.platformId || c.platformId === formData.platformId)
                     .map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.name}{formData.duration ? ` (${formData.duration}min)` : ''}
+                        {c.name} ({c.duration}min)
                       </option>
                     ))}
+                  <option value="__new__">➕ Crear nueva categoría...</option>
                 </select>
+
+                {/* Mini-formulario inline para categoría nueva */}
+                {inlineNewCat.active && (
+                  <div style={{
+                    background: '#f0fdf4', border: '1px solid #86efac',
+                    borderRadius: '8px', padding: '0.75rem', display: 'flex',
+                    flexDirection: 'column', gap: '0.5rem',
+                  }}>
+                    <strong style={{ fontSize: '0.85rem', color: '#15803d' }}>✨ Nueva categoría</strong>
+                    <input
+                      type="text"
+                      placeholder="Nombre (ej: serie 60min)"
+                      value={inlineNewCat.name}
+                      onChange={(e) => setInlineNewCat({ ...inlineNewCat, name: e.target.value })}
+                      style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #86efac', fontSize: '0.875rem' }}
+                      autoFocus
+                    />
+                    <input
+                      type="number"
+                      placeholder="Duración (min) — ej: 30, 60, 120"
+                      value={inlineNewCat.duration}
+                      onChange={(e) => setInlineNewCat({ ...inlineNewCat, duration: parseInt(e.target.value) || 30 })}
+                      style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #86efac', fontSize: '0.875rem' }}
+                    />
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+                        onClick={() => {
+                          if (!inlineNewCat.name.trim()) return;
+                          const newCat = {
+                            name: inlineNewCat.name.trim(),
+                            duration: inlineNewCat.duration,
+                            platformId: formData.platformId || null,
+                          };
+                          libraryStore.getState().addCategory(newCat);
+                          // Recuperar el ID recién creado
+                          const created = libraryStore.getState().categories
+                            .find((c) => c.name === newCat.name && c.platformId === newCat.platformId);
+                          setFormData({ ...formData, duration: inlineNewCat.duration, categoryId: created?.id || null });
+                          setInlineNewCat({ active: false, name: '', duration: 30 });
+                        }}
+                      >
+                        ✔ Agregar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+                        onClick={() => setInlineNewCat({ active: false, name: '', duration: 30 })}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <small style={{ color: '#64748b', fontSize: '0.8rem' }}>
                     ⏱ Duración propia de esta versión (minutos). Se auto-detecta del sufijo numérico del nombre.

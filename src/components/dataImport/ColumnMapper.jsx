@@ -93,7 +93,7 @@ function ColumnMapper({ fileName, headers, onMappingComplete, onCancel }) {
                     className={`mapper-select ${!mapping[field.key] ? 'empty' : ''}`}
                   >
                     <option value="">-- Selecciona una columna --</option>
-                    {headers.map((header) => (
+                    {headers.filter((h, i, arr) => h !== '' && h != null && arr.indexOf(h) === i).map((header) => (
                       <option key={header} value={header}>
                         {header}
                       </option>
@@ -118,7 +118,7 @@ function ColumnMapper({ fileName, headers, onMappingComplete, onCancel }) {
                     className="mapper-select"
                   >
                     <option value="">-- Sin mapeo --</option>
-                    {headers.map((header) => (
+                    {headers.filter((h, i, arr) => h !== '' && h != null && arr.indexOf(h) === i).map((header) => (
                       <option key={header} value={header}>
                         {header}
                       </option>

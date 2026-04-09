@@ -278,6 +278,39 @@
   border-top: 2px solid #bfdbfe;
 }
 
+/* ── Tabla especial Comerciales ──────────────────────────────────────── */
+.pr-comerciales-table {
+  margin-top: 0.25rem;
+}
+
+.pr-comerciales-table th:first-child {
+  font-size: 0.95rem;
+  color: #1e293b;
+  background: #dbeafe;
+}
+
+.pr-comerciales-table th {
+  background: #dbeafe;
+  color: #1e40af;
+  text-align: center;
+}
+
+.pr-comerciales-table td {
+  text-align: center;
+}
+
+.pr-comerciales-table td:first-child {
+  text-align: left;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.pr-comerciales-table tfoot .pr-total-row td {
+  background: #1e293b;
+  color: #f1f5f9;
+  border-top: 2px solid #334155;
+}
+
 /* ── Auditoría ───────────────────────────────────────────────────────── */
 .pr-audit {
   background: #fffbeb;

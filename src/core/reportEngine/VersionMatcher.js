@@ -47,6 +47,49 @@ class VersionMatcher {
   }
 
   /**
+   * Mapa de versiones IBERIA → duración en minutos.
+   * Fuente de verdad independiente del store: no requiere categoryId correcto.
+   * 60 min = series (episodios), 120 min = películas.
+   */
+  static IBERIA_DURATION_MAP = {
+    'e- F HD4Bsubt-OpSCr':  60,
+    'p- FHD4BVOAFRISCTUR':  60,
+    'p- FHD4BVOAFRISCr':    60,
+    'e- FHD4Bsubt-OpSCAD':  60,
+    'e- FCHD1BSubtOpSCr':  120,
+    'p- F HD Ci5BAFRISCr': 120,
+    'p- FHD5BlocuAFRISCr': 120,
+    'p- F HD Ci6BAFRISCr': 120,
+    'e- FCHD1BSubt-OpSCr': 120,
+  };
+
+  /**
+   * Clasifica una versión de IBERIA usando el mapa propio (independiente del store).
+   * Busca por nombre exacto (case-insensitive). Si no está → not registered.
+   * Devuelve category_key = 'resolve_by_duration' para que el engine resuelva
+   * contra las categorías configuradas de IBERIA.
+   *
+   * @param {string} versionName
+   * @returns {{ category_key: string, duration_minutes: number, registered: boolean, subPlatform: null }}
+   */
+  static classifyIberia(versionName) {
+    const trimmed = (versionName || '').trim();
+    // Búsqueda case-insensitive
+    const entry = Object.entries(this.IBERIA_DURATION_MAP).find(
+      ([name]) => name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (!entry) {
+      return { category_key: null, duration_minutes: 0, registered: false, subPlatform: null };
+    }
+    return {
+      category_key: 'resolve_by_duration',
+      duration_minutes: entry[1],
+      registered: true,
+      subPlatform: null,
+    };
+  }
+
+  /**
    * Detecta duración por sufijo numérico del nombre de versión.
    * Replica las reglas de fallback de logicas.json.
    * @param {string} versionName
@@ -94,7 +137,7 @@ class VersionMatcher {
       // Duración: primero la de la versión, luego la de la categoría como fallback
       const duration = Number(found.duration) || Number(cat?.duration) || 0;
       return {
-        category_key: cat?.name || found.categoryId || 'desconocido',
+        category_key: cat?.id || found.categoryId || 'desconocido',
         duration_minutes: duration,
         registered: true,
         subPlatform,
@@ -113,20 +156,55 @@ class VersionMatcher {
 
   /**
    * Para plataformas logica_sin_version: clasifica por columna SEASON.
-   * season != '0' y no vacío → serie
-   * season = '0' o vacío    → película
+   * season != '0' y no vacío → primera categoría (serie)
+   * season = '0' o vacío    → segunda categoría (película)
+   * 
+   * Soporta dos formatos:
+   * 1. Antiguo: categorias = ['serie_45min', 'pelicula_120min'], duracion_serie_minutos: 45, duracion_pelicula_minutos: 120
+   * 2. Nuevo:  categorias = [{key: 'serie_45min', duration: 45}, {key: 'pelicula_120min', duration: 120}]
    */
   static classifyBySeason(seasonVal, platformConfig) {
     const season = String(seasonVal || '').trim();
-    const duracionSerie = platformConfig?.duracion_serie_minutos || 45;
-    const duracionPelicula = platformConfig?.duracion_pelicula_minutos || 120;
-    const categorySerie = platformConfig?.categorias?.[0] || 'serie';
-    const categoryPelicula = platformConfig?.categorias?.[1] || 'pelicula';
+    
+    // Soportar ambos formatos
+    const cats = platformConfig?.categorias || [];
+    
+    // Detectar formato
+    const isNewFormat = cats.length > 0 && typeof cats[0] === 'object';
+    
+    if (isNewFormat) {
+      // Nuevo formato: array de objetos {key, duration}
+      const serieCategory = cats[0]; // Primera = serie
+      const peliculaCategory = cats[1]; // Segunda = película
+      
+      if (season === '' || season === '0') {
+        // PELÍCULA
+        return {
+          category_key: peliculaCategory?.key || 'pelicula',
+          duration_minutes: peliculaCategory?.duration || 120,
+          registered: true,
+          subPlatform: null
+        };
+      }
+      // SERIE
+      return {
+        category_key: serieCategory?.key || 'serie',
+        duration_minutes: serieCategory?.duration || 45,
+        registered: true,
+        subPlatform: null
+      };
+    } else {
+      // Formato antiguo: configuración con duracion_serie_minutos, duracion_pelicula_minutos
+      const duracionSerie = platformConfig?.duracion_serie_minutos || 45;
+      const duracionPelicula = platformConfig?.duracion_pelicula_minutos || 120;
+      const categorySerie = cats[0] || 'serie';
+      const categoryPelicula = cats[1] || 'pelicula';
 
-    if (season === '' || season === '0') {
-      return { category_key: categoryPelicula, duration_minutes: duracionPelicula, registered: true, subPlatform: null };
+      if (season === '' || season === '0') {
+        return { category_key: categoryPelicula, duration_minutes: duracionPelicula, registered: true, subPlatform: null };
+      }
+      return { category_key: categorySerie, duration_minutes: duracionSerie, registered: true, subPlatform: null };
     }
-    return { category_key: categorySerie, duration_minutes: duracionSerie, registered: true, subPlatform: null };
   }
 }
 

@@ -4,15 +4,47 @@
  */
 
 import React, { useState } from 'react';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import excelStore from '../../store/excelStore';
 import libraryStore from '../../store/libraryStore';
 import PlatformReportsEngine from '../../core/reportEngine/PlatformReportsEngine';
 import './PlatformReportsView.css';
 
-// Formatea minutos a "Xh Ym" o "Xm"
+// Formatea minutos a entero
 function formatMinutes(mins) {
   return Math.round(mins).toString();
+}
+
+/**
+ * Construye el label de categoría para encabezados.
+ * Si el nombre ya incluye la duración (ej: "serie_30min", "Serie 60min", "30", "120") la deja así.
+ * Si no, agrega " (Xmin)" al final para que cada columna sea inequívoca.
+ */
+function buildCategoryLabel(cat) {
+  // Nombre base: eliminar sufijos de duración sueltos como "60", "120", "45min", "(60 min)", etc.
+  const rawName = (cat.label || cat.name || cat.category_key || '').trim();
+  const cleanName = rawName
+    .replace(/\s*\(\d+\s*min\)/gi, '')   // quita "(60 min)" o "(60min)"
+    .replace(/\s+\d+min\b/gi, '')         // quita " 45min"
+    .replace(/\s+\d+\s*$/, '')            // quita número suelto al final " 60"
+    .trim();
+  const dur = Number(cat.duration_minutes || cat.duration || 0);
+  if (dur <= 0) return cleanName || rawName;
+  return `${cleanName || rawName} (${dur} min)`;
+}
+
+// Formatea segundos totales a H:MM:SS (para COMERCIALES)
+function formatTimecode(seconds) {
+  const totalSecs = Math.round(Number(seconds) || 0);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Convierte segundos a minutos decimales con 2 decimales
+function secondsToMinutes(seconds) {
+  return (Number(seconds || 0) / 60).toFixed(2);
 }
 
 // Formatea una fecha ISO a locale
@@ -92,121 +124,324 @@ function PlatformReportsView() {
     setExpandedEditors((prev) => ({ ...prev, [key]: !prev[key] }));
 
   // ── Export Excel ───────────────────────────────────────────────────────────
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (!reportData) return;
 
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'TrackingReports';
+    wb.created = new Date();
+
     const periodoStr = dateField === 'all'
       ? 'Todos los registros'
       : `${startDate} → ${endDate}`;
 
-    // ── Una hoja por plataforma (igual que Tracking_Project) ─────────────────
-    // Columnas: Editor | [cat1] | [cat2] | ... | Minutos | Total
-    // "Minutos" = total minutos del editor, "Total" = total ítems del editor
-    reportData.platforms.forEach((plt) => {
-      // Categorías que realmente usa esta plataforma (sin 'unregistered' si no hay)
+    // ── Paleta de colores ──────────────────────────────────────────────────
+    const COLOR = {
+      headerDark:   '1E293B', // slate-900  → fondo header plataforma
+      headerBlue:   '1D4ED8', // blue-700   → fondo header categorías
+      headerGreen:  '15803D', // green-700  → fondo Minutos/Total
+      totalRow:     '0F172A', // slate-950  → fondo fila TOTAL
+      summaryBg:    'DBEAFE', // blue-100   → fondo resumen
+      auditBg:      'FEF9C3', // yellow-100 → auditoría
+      altRow:       'F8FAFC', // slate-50   → filas alternas
+      white:        'FFFFFF',
+      comercialesBg:'1E40AF', // blue-800   → header COMERCIALES
+    };
+
+    const fontWhite = { name: 'Calibri', size: 11, color: { argb: 'FFFFFFFF' }, bold: true };
+    const fontDark  = { name: 'Calibri', size: 11, color: { argb: 'FF1E293B' } };
+    const fontBold  = { name: 'Calibri', size: 11, color: { argb: 'FF1E293B' }, bold: true };
+    const fontTotal = { name: 'Calibri', size: 11, color: { argb: 'FFFFFFFF' }, bold: true };
+
+    const border = {
+      top:    { style: 'thin', color: { argb: 'FFE2E8F0' } },
+      left:   { style: 'thin', color: { argb: 'FFE2E8F0' } },
+      bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+      right:  { style: 'thin', color: { argb: 'FFE2E8F0' } },
+    };
+    const borderTotal = {
+      top:    { style: 'medium', color: { argb: 'FF1E293B' } },
+      left:   { style: 'thin',   color: { argb: 'FFE2E8F0' } },
+      bottom: { style: 'medium', color: { argb: 'FF1E293B' } },
+      right:  { style: 'thin',   color: { argb: 'FFE2E8F0' } },
+    };
+
+    const applyHeaderCell = (cell, text, bgColor) => {
+      cell.value = text;
+      cell.font = fontWhite;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + bgColor } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.border = border;
+    };
+
+    const applyDataCell = (cell, value, isAlt = false, align = 'center') => {
+      cell.value = value;
+      cell.font = fontDark;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isAlt ? 'FFF8FAFC' : 'FFFFFFFF' } };
+      cell.alignment = { horizontal: align, vertical: 'middle' };
+      cell.border = border;
+    };
+
+    const applyTotalCell = (cell, value) => {
+      cell.value = value;
+      cell.font = fontTotal;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + COLOR.totalRow } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = borderTotal;
+    };
+
+    // ── Una hoja por plataforma ─────────────────────────────────────────────
+    for (const plt of reportData.platforms) {
+      const sheetName = plt.platform.replace(/[\\/*?[\]:]/g, '_').slice(0, 31);
+      const ws = wb.addWorksheet(sheetName);
+
+      // ── COMERCIALES ────────────────────────────────────────────────────────
+      if (plt.logica === 'logica_comerciales') {
+        ws.columns = [
+          { width: 28 }, { width: 14 }, { width: 14 }, { width: 12 },
+        ];
+
+        // Fila título (merge A1:D1)
+        const titleRow = ws.addRow([`${plt.platform}  •  ${periodoStr}`]);
+        ws.mergeCells(`A${titleRow.number}:D${titleRow.number}`);
+        const tc = titleRow.getCell(1);
+        tc.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+        tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + COLOR.comercialesBg } };
+        tc.alignment = { horizontal: 'center', vertical: 'middle' };
+        titleRow.height = 28;
+        ws.addRow([]);
+
+        // Encabezado
+        const hdr = ws.addRow([plt.platform, 'TIEMPO', 'MINUTOS', 'TOTAL']);
+        hdr.height = 20;
+        ['A','B','C','D'].forEach((col, i) => {
+          applyHeaderCell(hdr.getCell(col), [plt.platform,'TIEMPO','MINUTOS','TOTAL'][i], COLOR.headerDark);
+        });
+
+        // Filas editores
+        plt.editors.forEach((ed, idx) => {
+          const row = ws.addRow([
+            ed.editor,
+            formatTimecode(ed.totalSeconds),
+            parseFloat(secondsToMinutes(ed.totalSeconds)),
+            ed.totalCount,
+          ]);
+          const isAlt = idx % 2 === 1;
+          applyDataCell(row.getCell('A'), ed.editor, isAlt, 'left');
+          applyDataCell(row.getCell('B'), formatTimecode(ed.totalSeconds), isAlt);
+          applyDataCell(row.getCell('C'), parseFloat(secondsToMinutes(ed.totalSeconds)), isAlt);
+          applyDataCell(row.getCell('D'), ed.totalCount, isAlt);
+        });
+
+        // Fila TOTAL
+        const totRow = ws.addRow([
+          'TOTAL',
+          formatTimecode(plt.totalSeconds),
+          parseFloat(secondsToMinutes(plt.totalSeconds)),
+          plt.totalCount,
+        ]);
+        totRow.height = 18;
+        ['A','B','C','D'].forEach((col) => applyTotalCell(totRow.getCell(col), totRow.getCell(col).value));
+        continue;
+      }
+
+      // ── LÓGICA ESTÁNDAR ────────────────────────────────────────────────────
       const platCats = [];
       plt.editors.forEach((ed) => {
         Object.keys(ed.byCategory).forEach((cat) => {
           if (!platCats.includes(cat)) platCats.push(cat);
         });
       });
-      // Mover 'unregistered' al final si existe
+      // Mapa clave → duration_minutes para ordenar
+      const catDurationMap = {};
+      (plt.categories || []).forEach((cat) => {
+        catDurationMap[cat.category_key] = cat.duration_minutes || 0;
+      });
       const sortedCats = [
-        ...platCats.filter((c) => c !== 'unregistered'),
+        ...platCats
+          .filter((c) => c !== 'unregistered')
+          .sort((a, b) => (catDurationMap[a] || 0) - (catDurationMap[b] || 0)),
         ...platCats.filter((c) => c === 'unregistered'),
       ];
+      const categoryLabelMap = {};
+      (plt.categories || []).forEach((cat) => {
+        categoryLabelMap[cat.category_key] = buildCategoryLabel(cat);
+      });
+      const headerCats = sortedCats.map((cat) => categoryLabelMap[cat] || cat);
+      const totalCols = 1 + sortedCats.length + 2; // Editor + cats + Minutos + Total
 
-      const wsData = [];
+      ws.columns = [
+        { width: 28 },
+        ...sortedCats.map(() => ({ width: 16 })),
+        { width: 13 },
+        { width: 11 },
+      ];
 
-      // Título de hoja
-      wsData.push([`${plt.platform} — ${periodoStr}`]);
-      wsData.push([]);
+      // Fila título (merge toda la fila)
+      const lastColLetter = String.fromCharCode(64 + totalCols);
+      const titleRow = ws.addRow([`${plt.platform}  •  ${periodoStr}`]);
+      ws.mergeCells(`A${titleRow.number}:${lastColLetter}${titleRow.number}`);
+      const tc = titleRow.getCell(1);
+      tc.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+      tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + COLOR.headerDark } };
+      tc.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleRow.height = 28;
+      ws.addRow([]);
 
-      // Encabezado: Editor | [categorías] | Minutos | Total
-      wsData.push(['Editor', ...sortedCats, 'Minutos', 'Total']);
+      // Encabezado
+      const hdrRow = ws.addRow(['Editor', ...headerCats, 'Minutos', 'Total']);
+      hdrRow.height = 20;
+      hdrRow.getCell(1).value = 'Editor';
+      applyHeaderCell(hdrRow.getCell(1), 'Editor', COLOR.headerDark);
+      headerCats.forEach((_, i) => {
+        applyHeaderCell(hdrRow.getCell(2 + i), headerCats[i], COLOR.headerBlue);
+      });
+      applyHeaderCell(hdrRow.getCell(2 + sortedCats.length), 'Minutos', COLOR.headerGreen);
+      applyHeaderCell(hdrRow.getCell(3 + sortedCats.length), 'Total', COLOR.headerGreen);
 
-      // Una fila por editor
-      plt.editors.forEach((ed) => {
+      // Filas editores
+      plt.editors.forEach((ed, idx) => {
         const catCounts = sortedCats.map((cat) => ed.byCategory[cat]?.count || 0);
-        wsData.push([ed.editor, ...catCounts, ed.totalMinutes, ed.totalCount]);
+        const row = ws.addRow([ed.editor, ...catCounts, Math.round(ed.totalMinutes), ed.totalCount]);
+        const isAlt = idx % 2 === 1;
+        applyDataCell(row.getCell(1), ed.editor, isAlt, 'left');
+        catCounts.forEach((_, i) => applyDataCell(row.getCell(2 + i), catCounts[i], isAlt));
+        applyDataCell(row.getCell(2 + sortedCats.length), Math.round(ed.totalMinutes), isAlt);
+        applyDataCell(row.getCell(3 + sortedCats.length), ed.totalCount, isAlt);
       });
 
       // Fila TOTAL
       const totalCatCounts = sortedCats.map((cat) => plt.totalByCategory[cat]?.count || 0);
-      wsData.push(['TOTAL', ...totalCatCounts, plt.totalMinutes, plt.totalCount]);
+      const totRow = ws.addRow(['TOTAL', ...totalCatCounts, Math.round(plt.totalMinutes), plt.totalCount]);
+      totRow.height = 18;
+      for (let i = 1; i <= totalCols; i++) applyTotalCell(totRow.getCell(i), totRow.getCell(i).value);
+    }
 
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-      ws['!cols'] = [
-        { wch: 26 },                              // Editor
-        ...sortedCats.map(() => ({ wch: 16 })),   // categorías
-        { wch: 12 },                              // Minutos
-        { wch: 10 },                              // Total
-      ];
+    // ── Hoja RESUMEN ───────────────────────────────────────────────────────
+    const wsRes = wb.addWorksheet('Resumen');
 
-      // Nombre de hoja: máx 31 chars, sin caracteres inválidos (igual que Tracking_Project)
-      const sheetName = plt.platform.replace(/[\\/*?[\]:]/g, '_').slice(0, 31);
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    });
-
-    // ── Hoja "Resumen": una fila por plataforma con totales ───────────────────
-    // Columnas: Plataforma | [todas las categorías] | Minutos | Total
-    const allCats = [];
+    // Recopilar todas las categorías
+    const allCatKeys = [];
+    const allCatLabelMap = {};
     reportData.platforms.forEach((plt) => {
-      Object.keys(plt.totalByCategory).forEach((cat) => {
-        if (!allCats.includes(cat)) allCats.push(cat);
+      (plt.categories || []).forEach((cat) => {
+        if (!allCatKeys.includes(cat.category_key)) {
+          allCatKeys.push(cat.category_key);
+          allCatLabelMap[cat.category_key] = buildCategoryLabel(cat);
+        }
+      });
+      Object.keys(plt.totalByCategory).forEach((key) => {
+        if (!allCatKeys.includes(key)) allCatKeys.push(key);
       });
     });
     const sortedAllCats = [
-      ...allCats.filter((c) => c !== 'unregistered'),
-      ...allCats.filter((c) => c === 'unregistered'),
+      ...allCatKeys
+        .filter((c) => c !== 'unregistered')
+        .sort((a, b) => {
+          // Buscar duration_minutes de cada clave en cualquier plataforma
+          const durA = reportData.platforms.flatMap(p => p.categories || []).find(c => c.category_key === a)?.duration_minutes || 0;
+          const durB = reportData.platforms.flatMap(p => p.categories || []).find(c => c.category_key === b)?.duration_minutes || 0;
+          return durA - durB;
+        }),
+      ...allCatKeys.filter((c) => c === 'unregistered'),
+    ];
+    const allCatLabels = sortedAllCats.map((k) => allCatLabelMap[k] || k);
+    const totalResumen = 1 + sortedAllCats.length + 2;
+    const lastResCol = String.fromCharCode(64 + totalResumen);
+
+    wsRes.columns = [
+      { width: 22 },
+      ...sortedAllCats.map(() => ({ width: 16 })),
+      { width: 13 },
+      { width: 11 },
     ];
 
-    const wsResumen = [];
-    wsResumen.push([`Resumen — ${periodoStr}`]);
-    wsResumen.push([`Generado: ${new Date(reportData.generatedAt).toLocaleString('es-MX')}`]);
-    wsResumen.push([]);
-    wsResumen.push(['Plataforma', ...sortedAllCats, 'Minutos', 'Total']);
+    // Título resumen
+    const resTitleRow = wsRes.addRow([`RESUMEN GENERAL  •  ${periodoStr}`]);
+    wsRes.mergeCells(`A1:${lastResCol}1`);
+    const rtc = resTitleRow.getCell(1);
+    rtc.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+    rtc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + COLOR.headerDark } };
+    rtc.alignment = { horizontal: 'center', vertical: 'middle' };
+    resTitleRow.height = 28;
 
-    reportData.platforms.forEach((plt) => {
+    const genRow = wsRes.addRow([`Generado: ${new Date(reportData.generatedAt).toLocaleString('es-MX')}`]);
+    wsRes.mergeCells(`A2:${lastResCol}2`);
+    genRow.getCell(1).font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF64748B' } };
+    genRow.getCell(1).alignment = { horizontal: 'center' };
+    wsRes.addRow([]);
+
+    const resHdr = wsRes.addRow(['Plataforma', ...allCatLabels, 'Minutos', 'Total']);
+    resHdr.height = 20;
+    applyHeaderCell(resHdr.getCell(1), 'Plataforma', COLOR.headerDark);
+    allCatLabels.forEach((_, i) => applyHeaderCell(resHdr.getCell(2 + i), allCatLabels[i], COLOR.headerBlue));
+    applyHeaderCell(resHdr.getCell(2 + sortedAllCats.length), 'Minutos', COLOR.headerGreen);
+    applyHeaderCell(resHdr.getCell(3 + sortedAllCats.length), 'Total', COLOR.headerGreen);
+
+    reportData.platforms.forEach((plt, idx) => {
       const catCounts = sortedAllCats.map((cat) => plt.totalByCategory[cat]?.count || 0);
-      wsResumen.push([plt.platform, ...catCounts, plt.totalMinutes, plt.totalCount]);
+      const row = wsRes.addRow([plt.platform, ...catCounts, Math.round(plt.totalMinutes), plt.totalCount]);
+      const isAlt = idx % 2 === 1;
+      applyDataCell(row.getCell(1), plt.platform, isAlt, 'left');
+      catCounts.forEach((_, i) => applyDataCell(row.getCell(2 + i), catCounts[i], isAlt));
+      applyDataCell(row.getCell(2 + sortedAllCats.length), Math.round(plt.totalMinutes), isAlt);
+      applyDataCell(row.getCell(3 + sortedAllCats.length), plt.totalCount, isAlt);
     });
 
-    // Fila gran total
+    // Gran total resumen
     const grandCatCounts = sortedAllCats.map((cat) =>
       reportData.platforms.reduce((s, p) => s + (p.totalByCategory[cat]?.count || 0), 0)
     );
-    wsResumen.push(['GRAN TOTAL', ...grandCatCounts, reportData.grandTotal.minutes, reportData.grandTotal.count]);
+    const grandRow = wsRes.addRow(['GRAN TOTAL', ...grandCatCounts, Math.round(reportData.grandTotal.minutes), reportData.grandTotal.count]);
+    grandRow.height = 18;
+    for (let i = 1; i <= totalResumen; i++) applyTotalCell(grandRow.getCell(i), grandRow.getCell(i).value);
 
-    const wsRes = XLSX.utils.aoa_to_sheet(wsResumen);
-    wsRes['!cols'] = [
-      { wch: 16 },
-      ...sortedAllCats.map(() => ({ wch: 16 })),
-      { wch: 12 },
-      { wch: 10 },
-    ];
-    XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
+    // ── Hoja AUDITORÍA ─────────────────────────────────────────────────────
+    const wsAudit = wb.addWorksheet('Auditoría');
+    wsAudit.columns = [{ width: 44 }, { width: 42 }];
 
-    // ── Hoja "Auditoría" ───────────────────────────────────────────────────────
-    const auditData = [
-      ['AUDITORÍA DEL REPORTE'],
-      [],
-      ['Plataformas no registradas (descartadas):'],
-      ...reportData.audit.unregisteredPlatforms.map((p) => ['', p]),
-      [],
-      ['Versiones no registradas (fallback numérico aplicado):'],
-      ...reportData.audit.unregisteredVersions.map((v) => ['', v]),
-      [],
-      ['Filas descartadas (total):', reportData.audit.discardedCount],
-    ];
-    const wsAudit = XLSX.utils.aoa_to_sheet(auditData);
-    wsAudit['!cols'] = [{ wch: 42 }, { wch: 40 }];
-    XLSX.utils.book_append_sheet(wb, wsAudit, 'Auditoría');
+    const auditTitle = wsAudit.addRow(['AUDITORÍA DEL REPORTE']);
+    wsAudit.mergeCells('A1:B1');
+    const atc = auditTitle.getCell(1);
+    atc.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+    atc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF92400E' } };
+    atc.alignment = { horizontal: 'center', vertical: 'middle' };
+    auditTitle.height = 24;
+    wsAudit.addRow([]);
 
-    // Nombre del archivo
+    const addAuditSection = (title, items, emptyMsg) => {
+      const secRow = wsAudit.addRow([title]);
+      wsAudit.mergeCells(`A${secRow.number}:B${secRow.number}`);
+      secRow.getCell(1).font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF78350F' } };
+      secRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } };
+      if (items.length === 0) {
+        const r = wsAudit.addRow(['', emptyMsg]);
+        r.getCell(2).font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF16A34A' } };
+      } else {
+        items.forEach((v) => {
+          const r = wsAudit.addRow(['', v]);
+          r.getCell(2).font = { name: 'Calibri', size: 10, color: { argb: 'FF92400E' } };
+        });
+      }
+      wsAudit.addRow([]);
+    };
+
+    addAuditSection('🚫 Plataformas no registradas (descartadas):', reportData.audit.unregisteredPlatforms, '✅ Todas registradas');
+    addAuditSection('⚠️ Versiones no registradas (fallback aplicado):', reportData.audit.unregisteredVersions, '✅ Todas registradas');
+    const discRow = wsAudit.addRow(['Filas descartadas (total):', reportData.audit.discardedCount]);
+    discRow.getCell(1).font = fontBold;
+    discRow.getCell(2).font = { ...fontBold, color: { argb: 'FFB91C1C' } };
+
+    // ── Descargar ──────────────────────────────────────────────────────────
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
     const ts = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `reporte_plataformas_${ts}.xlsx`);
+    a.download = `reporte_plataformas_${ts}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -265,7 +500,7 @@ function PlatformReportsView() {
         {reportData && (
           <button
             className="pr-btn-export"
-            onClick={handleExportExcel}
+            onClick={() => handleExportExcel()}
           >
             ⬇ Descargar Excel
           </button>
@@ -313,99 +548,132 @@ function PlatformReportsView() {
                     </span>
                     <span className="pr-platform-name">🌐 {plt.platform}</span>
                     <span className="pr-platform-stats">
-                      {plt.totalCount} ítems · {formatMinutes(plt.totalMinutes)}
+                      {plt.totalCount} ítems ·{' '}
+                      {plt.logica === 'logica_comerciales'
+                        ? `${secondsToMinutes(plt.totalSeconds)} min`
+                        : `${formatMinutes(plt.totalMinutes)} min`}
                     </span>
                   </div>
 
                   {/* Contenido plataforma */}
                   {expandedPlatforms[plt.platform] && (
                     <div className="pr-platform-body">
-                      {/* Totales por categoría */}
-                      {Object.keys(plt.totalByCategory).length > 0 && (
-                        <div className="pr-category-totals">
-                          <span className="pr-cat-title">Totales por categoría:</span>
-                          {/* Usar orden de plt.categories si está disponible (categorías configuradas),
-                              luego cualquier extra que aparezca en los datos */}
-                          {(() => {
-                            const configuredKeys = (plt.categories || []).map((c) => c.category_key);
-                            const dataKeys = Object.keys(plt.totalByCategory);
-                            const orderedKeys = [
-                              ...new Set([
-                                ...configuredKeys.filter((k) => dataKeys.includes(k)),
-                                ...dataKeys.filter((k) => !configuredKeys.includes(k)),
-                              ])
-                            ];
-                            return orderedKeys.map((cat) => {
-                              const val = plt.totalByCategory[cat];
-                              if (!val) return null;
-                              const catDef = (plt.categories || []).find((c) => c.category_key === cat);
-                              const label = catDef ? `${catDef.label} (${catDef.duration_minutes} min)` : cat;
-                              return (
-                                <span key={cat} className="pr-cat-chip" style={catDef?.color ? { borderLeft: `4px solid ${catDef.color}` } : {}}>
-                                  {label}: {val.count} ({formatMinutes(val.minutes)})
-                                </span>
-                              );
-                            });
-                          })()}
-                        </div>
-                      )}
 
-                      {/* Editores */}
-                      {plt.editors.map((ed) => {
-                        const edKey = `${plt.platform}::${ed.editor}`;
-                        return (
-                          <div key={edKey} className="pr-editor-row">
-                            {/* Header editor */}
-                            <div
-                              className="pr-editor-header"
-                              onClick={() => toggleEditor(edKey)}
-                            >
-                              <span className="pr-editor-toggle">
-                                {expandedEditors[edKey] ? '▼' : '▶'}
-                              </span>
-                              <span className="pr-editor-name">👤 {ed.editor}</span>
-                              <span className="pr-editor-stats">
-                                {ed.totalCount} ítems · {formatMinutes(ed.totalMinutes)}
-                              </span>
+                      {/* ── Lógica Comerciales: tabla plana EDITOR | TIEMPO | MINUTOS | TOTAL ── */}
+                      {plt.logica === 'logica_comerciales' ? (
+                        <table className="pr-cat-table pr-comerciales-table">
+                          <thead>
+                            <tr>
+                              <th>{plt.platform}</th>
+                              <th>TIEMPO</th>
+                              <th>MINUTOS</th>
+                              <th>TOTAL</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {plt.editors.map((ed) => (
+                              <tr key={ed.editor}>
+                                <td>{ed.editor}</td>
+                                <td>{formatTimecode(ed.totalSeconds)}</td>
+                                <td>{secondsToMinutes(ed.totalSeconds)}</td>
+                                <td>{ed.totalCount}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="pr-total-row">
+                              <td><strong>TOTAL</strong></td>
+                              <td><strong>{formatTimecode(plt.totalSeconds)}</strong></td>
+                              <td><strong>{secondsToMinutes(plt.totalSeconds)}</strong></td>
+                              <td><strong>{plt.totalCount}</strong></td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      ) : (
+                        <>
+                          {/* Totales por categoría (lógica estándar) */}
+                          {Object.keys(plt.totalByCategory).length > 0 && (
+                            <div className="pr-category-totals">
+                              <span className="pr-cat-title">Totales por categoría:</span>
+                              {(() => {
+                                const configuredKeys = (plt.categories || []).map((c) => c.category_key);
+                                const dataKeys = Object.keys(plt.totalByCategory);
+                                const orderedKeys = [
+                                  ...new Set([
+                                    ...configuredKeys.filter((k) => dataKeys.includes(k)),
+                                    ...dataKeys.filter((k) => !configuredKeys.includes(k)),
+                                  ])
+                                ];
+                                return orderedKeys.map((cat) => {
+                                  const val = plt.totalByCategory[cat];
+                                  if (!val) return null;
+                                  const catDef = (plt.categories || []).find((c) => c.category_key === cat);
+                                  const label = catDef ? buildCategoryLabel(catDef) : cat;
+                                  return (
+                                    <span key={cat} className="pr-cat-chip" style={catDef?.color ? { borderLeft: `4px solid ${catDef.color}` } : {}}>
+                                      {label}: {val.count} ({formatMinutes(val.minutes)})
+                                    </span>
+                                  );
+                                });
+                              })()}
                             </div>
+                          )}
 
-                            {/* Desglose por categoría del editor */}
-                            {expandedEditors[edKey] && (
-                              <table className="pr-cat-table">
-                                <thead>
-                                  <tr>
-                                    <th>Categoría</th>
-                                    <th>Ítems</th>
-                                    <th>Minutos</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {Object.entries(ed.byCategory).map(([cat, val]) => {
-                                    const catDef = (plt.categories || []).find((c) => c.category_key === cat);
-                                    const label = catDef ? `${catDef.label} (${catDef.duration_minutes} min)` : cat;
-                                    return (
-                                      <tr key={cat}>
-                                        <td style={catDef?.color ? { borderLeft: `3px solid ${catDef.color}`, paddingLeft: '8px' } : {}}>
-                                          {label}
-                                        </td>
-                                        <td>{val.count}</td>
-                                        <td>{formatMinutes(val.minutes)}</td>
+                          {/* Editores */}
+                          {plt.editors.map((ed) => {
+                            const edKey = `${plt.platform}::${ed.editor}`;
+                            return (
+                              <div key={edKey} className="pr-editor-row">
+                                <div
+                                  className="pr-editor-header"
+                                  onClick={() => toggleEditor(edKey)}
+                                >
+                                  <span className="pr-editor-toggle">
+                                    {expandedEditors[edKey] ? '▼' : '▶'}
+                                  </span>
+                                  <span className="pr-editor-name">👤 {ed.editor}</span>
+                                  <span className="pr-editor-stats">
+                                    {ed.totalCount} ítems · {formatMinutes(ed.totalMinutes)} min
+                                  </span>
+                                </div>
+                                {expandedEditors[edKey] && (
+                                  <table className="pr-cat-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Categoría</th>
+                                        <th>Ítems</th>
+                                        <th>Minutos</th>
                                       </tr>
-                                    );
-                                  })}
-                                </tbody>
-                                <tfoot>
-                                  <tr className="pr-total-row">
-                                    <td><strong>TOTAL</strong></td>
-                                    <td><strong>{ed.totalCount}</strong></td>
-                                    <td><strong>{formatMinutes(ed.totalMinutes)}</strong></td>
-                                  </tr>
-                                </tfoot>
-                              </table>
-                            )}
-                          </div>
-                        );
-                      })}
+                                    </thead>
+                                    <tbody>
+                                      {Object.entries(ed.byCategory).map(([cat, val]) => {
+                                        const catDef = (plt.categories || []).find((c) => c.category_key === cat);
+                                        const label = catDef ? buildCategoryLabel(catDef) : cat;
+                                        return (
+                                          <tr key={cat}>
+                                            <td style={catDef?.color ? { borderLeft: `3px solid ${catDef.color}`, paddingLeft: '8px' } : {}}>
+                                              {label}
+                                            </td>
+                                            <td>{val.count}</td>
+                                            <td>{formatMinutes(val.minutes)} min</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                    <tfoot>
+                                      <tr className="pr-total-row">
+                                        <td><strong>TOTAL</strong></td>
+                                        <td><strong>{ed.totalCount}</strong></td>
+                                        <td><strong>{formatMinutes(ed.totalMinutes)} min</strong></td>
+                                      </tr>
+                                    </tfoot>
+                                  </table>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

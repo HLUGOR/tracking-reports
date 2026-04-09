@@ -150,6 +150,157 @@ Agregadas nuevas vistas en la navegación:
 
 ---
 
+# Changelog – Sesión 8 de Abril de 2026
+
+## Resumen Ejecutivo
+Se implementó la lógica nueva `logica_comerciales` para la plataforma **COMERCIALES**, se corrigieron bugs en la exportación Excel (cabeceras con IDs numéricos, columna `unregistered` en BRAZIL), se agregó Export/Import de librería para sincronización entre dispositivos, y se modernizó el Excel exportado con estilos profesionales usando **ExcelJS**.
+
+---
+
+## Cambios Implementados
+
+### 1. `logica_comerciales` — Nueva lógica de plataforma
+
+**Contexto:**
+COMERCIALES es una plataforma cuyo reporte NO se organiza por versión ni categoría. En cambio, cuenta el total de assets entregados por editor y acumula la duración total en timecode.
+
+**Formato de entrada:**
+```
+PLATFORM | SEASON | CLIP | SHORT | VERSION | EDITOR | DURATION | APPROVED_DATE
+```
+- `DURATION` en formato `HH:MM:SS` (o `HH:MM:SS:FF` con frames, que se ignoran)
+- Cada fila = 1 asset
+
+**Formato de salida (dashboard y Excel):**
+```
+EDITOR | TIEMPO (HH:MM:SS) | MINUTOS | TOTAL (assets)
+```
+
+**Archivos modificados — `PlatformReportsEngine.js`:**
+- Agregado `COMERCIALES: { logica: 'logica_comerciales' }` en `DEFAULT_PLATAFORMA_CONFIG`
+- Nuevo método estático `parseTimecode(tc)`: convierte `HH:MM:SS` → total de segundos
+- Nueva rama `logica_comerciales` en el loop de procesamiento de filas:
+  - Lee campo `DURATION` de cada fila
+  - Acumula `totalSeconds` por editor
+  - Cuenta assets (1 por fila)
+  - No usa VERSION, SEASON, ni categorías
+- Output por plataforma incluye campo `logica` para identificar el tipo en el frontend
+
+**Archivos modificados — `PlatformReportsView.jsx`:**
+- Nueva función `formatTimecode(seconds)` → formato `H:MM:SS`
+- Nueva función `secondsToMinutes(seconds)` → minutos decimales con 2 decimales
+- El encabezado de plataforma detecta `plt.logica === 'logica_comerciales'` y muestra `TIEMPO` en vez de `Minutos`
+- Renderiza tabla especial con clase `pr-comerciales-table` (EDITOR | TIEMPO | MINUTOS | TOTAL) en lugar de la tabla de categorías estándar
+
+**Archivos modificados — `PlatformReportsView.css`:**
+- Nueva clase `.pr-comerciales-table`: header azul (`#dbeafe`), celdas centradas, fila de totales oscura (`#1e293b` con texto blanco)
+
+**Archivos modificados — `LibraryView.jsx`:**
+- Agregada opción `logica_comerciales` al dropdown de creación de plataformas:
+  ```html
+  <option value="logica_comerciales">logica_comerciales — cuenta assets y acumula DURATION</option>
+  ```
+
+---
+
+### 2. Export/Import de Librería
+
+**Problema:** La librería (plataformas, categorías, versiones) vive en `localStorage`. Al abrir la app en GitHub Pages (origen distinto a `localhost:3000`), la librería estaba vacía y no se podían generar reportes.
+
+**Solución:** Botones de exportación e importación en el header de `LibraryView.jsx`.
+
+**`handleExportLibrary()`:**
+- Serializa el estado completo de `libraryStore` (plataformas, categorías, versiones, column mappings) a JSON
+- Descarga el archivo como `tracking-library-{fecha}.json`
+
+**`handleImportLibrary(e)`:**
+- Lee el JSON importado
+- Llama a `importLibraryData()` del store para reemplazar el estado completo
+- Confirma al usuario con `window.confirm` antes de sobrescribir
+
+**`LibraryView.css`:**
+- `.library-header` cambiado de `flex-column` a `flex-row` con `space-between`
+- Nuevos estilos: `.library-header-actions`, `.lib-btn-export`, `.lib-btn-import`
+
+---
+
+### 3. Corrección: Cabeceras numéricas en Excel (LATAM)
+
+**Problema:** Las columnas de categorías en el Excel de LATAM mostraban IDs numéricos como `1775515117540` en vez de nombres como `serie (30 min)`.
+
+**Causa raíz:** `sortedCats` usaba `category_key` (IDs internos basados en timestamp) para construir las cabeceras de columna.
+
+**Fix en `PlatformReportsView.jsx`:**
+- Se construye `categoryLabelMap` haciendo `{ [cat.id]: cat.label }` desde `plt.categories`
+- Las cabeceras del Excel usan `categoryLabelMap[key] ?? key` para resolver el nombre legible
+
+---
+
+### 4. Corrección: Columna `unregistered` en BRAZIL
+
+**Problema:** BRAZIL mostraba una columna `unregistered` en el Excel. BRAZIL es una sub-plataforma que se detecta automáticamente desde los prefijos de versión (`BRA_*`), pero sus categorías no estaban registradas en la librería — solo las de LATAM.
+
+**Fix en `PlatformReportsEngine.js`:**
+- `resolveCategoryForPlatform` ahora acepta un cuarto parámetro `fallbackPlatform`:
+  - Si no se encuentra categoría para la plataforma efectiva (BRAZIL), reintenta con `fallbackPlatform` (LATAM)
+- Se agrega `subPlatformParent = { 'BRAZIL': 'LATAM', 'LATAM': 'LATAM' }` al construir el output de categorías
+- Al procesar el output de cada editor, si la plataforma es BRAZIL, se heredan las categorías de LATAM
+
+---
+
+### 5. Excel Profesional con ExcelJS
+
+**Problema:** El Excel exportado usaba la librería `xlsx` por defecto, sin posibilidad de dar formato visual.
+
+**Solución:** Se reemplazó `xlsx` por **ExcelJS** en `PlatformReportsView.jsx`. La función `handleExportExcel` se reescribió como `async`.
+
+**Paleta de colores:**
+```js
+const COLOR = {
+  headerDark:    '1E293B', // slate-900 — cabecera principal
+  headerBlue:    '1D4ED8', // blue-700  — cabeceras de plataformas
+  headerGreen:   '15803D', // green-700 — cabeceras de resumen
+  totalRow:      '0F172A', // slate-950 — fila de totales
+  summaryBg:     'DBEAFE', // blue-100  — hoja resumen
+  auditBg:       'FEF9C3', // yellow-100 — hoja auditoría
+  altRow:        'F8FAFC', // slate-50  — filas alternas
+  white:         'FFFFFF',
+  comercialesBg: '1E40AF', // blue-800  — cabecera COMERCIALES
+};
+```
+
+**Características del Excel generado:**
+- Título con celdas fusionadas (merge) por plataforma
+- Cabeceras con fondo de color, texto blanco y negrita
+- Filas alternas con color suave (`altRow`)
+- Fila de totales con fondo oscuro y texto blanco en negrita
+- Bordes en todas las celdas
+- Hoja "Resumen" con subtotales por plataforma
+- Hoja "Auditoría" con secciones coloreadas (plataformas no registradas, versiones sin categoría, filas descartadas)
+- Anchos de columna automáticos (`autofit`)
+
+---
+
+## Archivos Modificados (Sesión 8 Abril)
+
+| Archivo | Tipo | Cambios |
+|---------|------|---------|
+| `src/core/reportEngine/PlatformReportsEngine.js` | ✏️ Actualizado | `logica_comerciales`, `parseTimecode`, fallback BRAZIL→LATAM, campo `logica` en output |
+| `src/components/reports/PlatformReportsView.jsx` | ✏️ Actualizado | Tabla COMERCIALES, `formatTimecode`, `secondsToMinutes`, ExcelJS, `categoryLabelMap` |
+| `src/components/reports/PlatformReportsView.css` | ✏️ Actualizado | `.pr-comerciales-table` |
+| `src/components/dataImport/LibraryView.jsx` | ✏️ Actualizado | Export/Import librería, opción `logica_comerciales` en dropdown |
+| `src/styles/LibraryView.css` | ✏️ Actualizado | `.library-header-actions`, estilos botones Export/Import |
+
+---
+
+## Deploy
+
+✅ Build exitoso (`npm run build`) — `458.7 kB`  
+✅ Publicado en **GitHub Pages**: `https://hlugor.github.io/tracking-reports`  
+
+
+---
+
 ## Notas Arquitectónicas
 
 ### Patrón de Aislamiento por Plataforma
