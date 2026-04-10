@@ -1,250 +1,261 @@
-/**
- * EditorReportsView.jsx - Vista de reportes por editor
+﻿/**
+ * EditorReportsView.jsx - Vista de reportes por editor (cross-platform)
+ * Usa PlatformReportsEngine para procesar los datos reales y pivota
+ * el resultado para una vista centrada en el editor.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import ExcelJS from 'exceljs';
 import excelStore from '../../store/excelStore';
-import EditorReportsEngine from '../../core/reportEngine/EditorReportsEngine';
-import ExcelExporter from '../../core/excel/ExcelExporter';
-import DataTable from '../shared/DataTable';
+import libraryStore from '../../store/libraryStore';
+import PlatformReportsEngine from '../../core/reportEngine/PlatformReportsEngine';
 import './EditorReportsView.css';
 
 function EditorReportsView() {
-  const excelRows = excelStore((state) => state.excelRows);
-  const [reportData, setReportData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [startDate, setStartDate] = useState(
-    new Date(new Date().setDate(new Date().getDate() - 30))
-      .toISOString()
-      .split('T')[0]
-  );
-  const [endDate, setEndDate] = useState(
-    new Date().toISOString().split('T')[0]
-  );
-  const [columnConfig, setColumnConfig] = useState({
-    editorColumn: 'editor',
-    hoursColumn: 'horas',
-    dateColumn: 'fecha',
-  });
+  const rows    = excelStore((s) => s.excelRows);
+  const library = libraryStore((s) => ({
+    platforms:  s.platforms,
+    categories: s.categories,
+    versions:   s.versions,
+  }));
 
-  /**
-   * Genera reporte
-   */
-  const handleGenerateReport = () => {
-    if (!startDate || !endDate) {
-      alert('Selecciona ambas fechas');
+  const today    = new Date().toISOString().split('T')[0];
+  const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+
+  const [startDate, setStartDate] = useState(monthAgo);
+  const [endDate,   setEndDate]   = useState(today);
+  const [dateField, setDateField] = useState('approved_date');
+  const [reportData, setReportData] = useState(null);
+  const [loading, setLoading]       = useState(false);
+  const [error,   setError]         = useState(null);
+
+  // â”€â”€ Generar reporte â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleGenerate = () => {
+    if (dateField !== 'all' && (!startDate || !endDate)) {
+      setError('Selecciona ambas fechas o elige "Sin filtro de fecha".');
       return;
     }
-
+    setError(null);
     setLoading(true);
 
     try {
-      const start = new Date(startDate);
-      const end = new Date(endDate + 'T23:59:59');
-
-      const result = EditorReportsEngine.calculateByEditor(
-        excelRows,
-        start,
-        end,
-        columnConfig
+      // Reutilizar exactamente el mismo engine que PlatformReportsView
+      const platResult = PlatformReportsEngine.buildReport(
+        rows,
+        startDate || '2000-01-01',
+        endDate   || today,
+        library,
+        dateField
       );
 
-      setReportData(result);
-    } catch (error) {
-      console.error('Error generando reporte:', error);
-      alert('Error: ' + error.message);
+      // Pivotar: platform Ã— editor â†’ editor Ã— platform
+      const editorMap = {};
+      platResult.platforms.forEach((plt) => {
+        plt.editors.forEach((ed) => {
+          if (!editorMap[ed.editor]) {
+            editorMap[ed.editor] = {
+              editor:       ed.editor,
+              totalCount:   0,
+              totalMinutes: 0,
+              totalSeconds: 0,
+              byPlatform:   {},
+            };
+          }
+          editorMap[ed.editor].totalCount   += ed.totalCount;
+          editorMap[ed.editor].totalMinutes += ed.totalMinutes;
+          editorMap[ed.editor].totalSeconds += ed.totalSeconds || 0;
+          editorMap[ed.editor].byPlatform[plt.platform] = {
+            count:   ed.totalCount,
+            minutes: Math.round(ed.totalMinutes),
+          };
+        });
+      });
+
+      const editors = Object.values(editorMap)
+        .sort((a, b) => b.totalCount - a.totalCount);
+
+      const platforms = platResult.platforms.map((p) => p.platform);
+
+      const totalItems   = editors.reduce((s, e) => s + e.totalCount,   0);
+      const totalMinutes = editors.reduce((s, e) => s + e.totalMinutes, 0);
+
+      setReportData({
+        editors,
+        platforms,
+        summary: {
+          totalEditors:  editors.length,
+          totalItems,
+          totalMinutes:  Math.round(totalMinutes),
+          totalPlatforms: platforms.length,
+        },
+        generatedAt: new Date().toISOString(),
+        period: dateField === 'all' ? 'Todos los registros' : `${startDate} â†’ ${endDate}`,
+      });
+    } catch (err) {
+      console.error('Error generando reporte editores:', err);
+      setError('Error: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Exporta reporte
-   */
-  const handleExport = async (format) => {
+  // â”€â”€ Exportar Excel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const handleExportExcel = async () => {
     if (!reportData) return;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Editores');
 
-    const fileName = `reporte_editores_${startDate}_${endDate}`;
+    // Cabeceras: Editor | <plataformas...> | Total Items | Total Min
+    const headers = ['Editor', ...reportData.platforms, 'Total Items', 'Total Min'];
+    ws.columns = headers.map((_, i) => ({ width: i === 0 ? 28 : 14 }));
 
-    try {
-      if (format === 'excel') {
-        await ExcelExporter.exportToExcel(reportData.editors, {
-          title: `Reporte de Horas por Editor (${startDate} a ${endDate})`,
-          fileName: `${fileName}.xlsx`,
-          columnWidths: {
-            editor: 20,
-            totalHours: 15,
-            tasksCompleted: 15,
-            averageHoursPerTask: 20,
-            productivity: 15,
-          },
-        });
-      } else if (format === 'json') {
-        ExcelExporter.exportToJSON(reportData, `${fileName}.json`);
-      } else if (format === 'csv') {
-        ExcelExporter.exportToCSV(reportData.editors, `${fileName}.csv`);
-      }
-    } catch (error) {
-      console.error('Error exportando:', error);
-      alert('Error: ' + error.message);
-    }
+    const hdr = ws.addRow(headers);
+    hdr.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+      cell.alignment = { horizontal: 'center' };
+    });
+
+    reportData.editors.forEach((ed, idx) => {
+      const platCounts = reportData.platforms.map((p) => ed.byPlatform[p]?.count || 0);
+      const row = ws.addRow([ed.editor, ...platCounts, ed.totalCount, Math.round(ed.totalMinutes)]);
+      const bg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF1F5F9';
+      row.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.alignment = { horizontal: typeof cell.value === 'number' ? 'center' : 'left' };
+      });
+    });
+
+    // Fila TOTAL
+    const totRow = ws.addRow([
+      'TOTAL',
+      ...reportData.platforms.map((p) =>
+        reportData.editors.reduce((s, e) => s + (e.byPlatform[p]?.count || 0), 0)
+      ),
+      reportData.summary.totalItems,
+      reportData.summary.totalMinutes,
+    ]);
+    totRow.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+      cell.alignment = { horizontal: 'center' };
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reporte_editores_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  // Auto-generar reporte al montar
-  useEffect(() => {
-    if (excelRows.length > 0) {
-      handleGenerateReport();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [excelRows.length]);
-
+  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
     <div className="editor-reports">
-      <h2>📊 Reportes por Editor</h2>
+      <h2>ðŸ“Š Reportes por Editor</h2>
 
-      {/* Filters */}
-      <div className="filters">
+      {/* Filtros */}
+      <div className="filters" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-end', marginBottom: '1.5rem', background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 4px #0001' }}>
         <div className="filter-group">
-          <label>Fecha Inicio:</label>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            disabled={loading}
-          />
+          <label>Filtrar por fecha:</label>
+          <select value={dateField} onChange={(e) => setDateField(e.target.value)} style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
+            <option value="all">ðŸ—“ Sin filtro de fecha</option>
+            <option value="approved_date">âœ… Fecha aprobaciÃ³n</option>
+            <option value="air_date">ðŸ“¡ Fecha aire</option>
+          </select>
         </div>
-
-        <div className="filter-group">
-          <label>Fecha Fin:</label>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            disabled={loading}
-          />
-        </div>
-
-        <div className="filter-group">
-          <label>Columna Editor:</label>
-          <input
-            type="text"
-            value={columnConfig.editorColumn}
-            onChange={(e) =>
-              setColumnConfig({
-                ...columnConfig,
-                editorColumn: e.target.value,
-              })
-            }
-            disabled={loading}
-            placeholder="ej: editor"
-          />
-        </div>
-
-        <div className="filter-group">
-          <label>Columna Horas:</label>
-          <input
-            type="text"
-            value={columnConfig.hoursColumn}
-            onChange={(e) =>
-              setColumnConfig({
-                ...columnConfig,
-                hoursColumn: e.target.value,
-              })
-            }
-            disabled={loading}
-            placeholder="ej: horas"
-          />
-        </div>
-
-        <button
-          onClick={handleGenerateReport}
-          className="btn btn-primary"
-          disabled={loading}
-        >
-          {loading ? '⏳ Generando...' : '📈 Generar Reporte'}
+        {dateField !== 'all' && (
+          <>
+            <div className="filter-group">
+              <label>Fecha Inicio:</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: '0.4rem', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
+            </div>
+            <div className="filter-group">
+              <label>Fecha Fin:</label>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: '0.4rem', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
+            </div>
+          </>
+        )}
+        <button onClick={handleGenerate} disabled={loading} style={{ padding: '0.5rem 1.25rem', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}>
+          {loading ? 'â³ Generandoâ€¦' : 'ðŸ“ˆ Generar Reporte'}
         </button>
       </div>
 
-      {/* Report Results */}
+      {error && <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '0.75rem 1rem', color: '#b91c1c', marginBottom: '1rem' }}>{error}</div>}
+
+      {/* Resumen */}
       {reportData && (
-        <div className="report-results">
-          {/* Summary Stats */}
-          <div className="summary">
-            <h3>📋 Resumen</h3>
-            <div className="stats-grid">
-              <div className="stat">
-                <div className="label">Total Editores</div>
-                <div className="value">{reportData.summary.totalEditors}</div>
+        <>
+          <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+            {[
+              { label: 'Total Editores',   value: reportData.summary.totalEditors },
+              { label: 'Total Items',      value: reportData.summary.totalItems },
+              { label: 'Total Minutos',    value: reportData.summary.totalMinutes },
+              { label: 'Plataformas',      value: reportData.summary.totalPlatforms },
+            ].map((s) => (
+              <div key={s.label} style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', borderRadius: '10px', padding: '1rem', color: '#fff', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.8rem', opacity: 0.85, marginBottom: '0.3rem' }}>{s.label}</div>
+                <div style={{ fontSize: '1.8rem', fontWeight: 700 }}>{s.value}</div>
               </div>
-              <div className="stat">
-                <div className="label">Total Horas</div>
-                <div className="value">{reportData.summary.totalHours}</div>
-              </div>
-              <div className="stat">
-                <div className="label">Promedio por Editor</div>
-                <div className="value">
-                  {reportData.summary.averageHoursPerEditor}
-                </div>
-              </div>
-              <div className="stat">
-                <div className="label">Total Tareas</div>
-                <div className="value">{reportData.summary.totalTasks}</div>
-              </div>
-              <div className="stat">
-                <div className="label">Promedio Horas/Tarea</div>
-                <div className="value">
-                  {reportData.summary.averageHoursPerTask}
-                </div>
-              </div>
-            </div>
+            ))}
           </div>
 
-          {/* Table */}
-          <div className="table-section">
-            <h3>📊 Detalle por Editor</h3>
-            <DataTable
-              columns={[
-                { key: 'editor', label: 'Editor' },
-                { key: 'totalHours', label: 'Total Horas' },
-                { key: 'tasksCompleted', label: 'Tareas' },
-                { key: 'averageHoursPerTask', label: 'Promedio Horas/Tarea' },
-                { key: 'productivity', label: 'Productividad %' },
-              ]}
-              data={reportData.editors}
-            />
+          {/* Tabla detalle */}
+          <div style={{ background: '#fff', borderRadius: '8px', boxShadow: '0 1px 4px #0001', overflow: 'auto', marginBottom: '1.5rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+              <thead>
+                <tr style={{ background: '#1e3a8a', color: '#fff' }}>
+                  <th style={{ padding: '0.6rem 1rem', textAlign: 'left' }}>Editor</th>
+                  {reportData.platforms.map((p) => (
+                    <th key={p} style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>{p}</th>
+                  ))}
+                  <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Total Items</th>
+                  <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>Total Min</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportData.editors.map((ed, idx) => (
+                  <tr key={ed.editor} style={{ background: idx % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                    <td style={{ padding: '0.5rem 1rem', fontWeight: 500 }}>{ed.editor}</td>
+                    {reportData.platforms.map((p) => (
+                      <td key={p} style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: ed.byPlatform[p] ? '#1e3a8a' : '#cbd5e1' }}>
+                        {ed.byPlatform[p]?.count || 'â€”'}
+                      </td>
+                    ))}
+                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{ed.totalCount}</td>
+                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}>{Math.round(ed.totalMinutes)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: '#e2e8f0', fontWeight: 700 }}>
+                  <td style={{ padding: '0.5rem 1rem' }}>TOTAL</td>
+                  {reportData.platforms.map((p) => (
+                    <td key={p} style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}>
+                      {reportData.editors.reduce((s, e) => s + (e.byPlatform[p]?.count || 0), 0)}
+                    </td>
+                  ))}
+                  <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}>{reportData.summary.totalItems}</td>
+                  <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}>{reportData.summary.totalMinutes}</td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
 
-          {/* Export Options */}
-          <div className="export-section">
-            <h3>💾 Exportar Reporte</h3>
-            <div className="export-buttons">
-              <button
-                onClick={() => handleExport('excel')}
-                className="btn btn-success"
-              >
-                📥 Descargar Excel
-              </button>
-              <button
-                onClick={() => handleExport('json')}
-                className="btn btn-info"
-              >
-                📝 Descargar JSON
-              </button>
-              <button
-                onClick={() => handleExport('csv')}
-                className="btn btn-warning"
-              >
-                📊 Descargar CSV
-              </button>
-            </div>
+          {/* Exportar */}
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button onClick={handleExportExcel} style={{ padding: '0.5rem 1.25rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}>
+              ðŸ“¥ Descargar Excel
+            </button>
           </div>
-        </div>
+        </>
       )}
 
-      {loading && !reportData && (
-        <div className="loading">
-          <div className="spinner"></div>
-          <p>Generando reporte...</p>
+      {!reportData && !loading && rows.length === 0 && (
+        <div style={{ textAlign: 'center', color: '#94a3b8', marginTop: '3rem' }}>
+          <p>Carga un Excel primero para generar el reporte.</p>
         </div>
       )}
     </div>

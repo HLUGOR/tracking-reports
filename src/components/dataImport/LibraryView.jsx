@@ -64,6 +64,9 @@ function LibraryView() {
   // Filtro de plataforma activo en el tab Categorías
   const [filterCatPlatformId, setFilterCatPlatformId] = useState(null);
 
+  // Búsqueda en el tab Versiones
+  const [versionSearch, setVersionSearch] = useState('');
+
   const platforms = libraryStore((state) => state.platforms);
   const categories = libraryStore((state) => state.categories);
   const versions = libraryStore((state) => state.versions);
@@ -918,57 +921,94 @@ function LibraryView() {
               );
             })()}
 
+            {/* Barra de búsqueda */}
+            {versions.length > 0 && (
+              <div style={{ marginBottom: '0.75rem', position: 'relative' }}>
+                <input
+                  type="text"
+                  placeholder="🔍 Buscar versión por nombre…"
+                  value={versionSearch}
+                  onChange={(e) => setVersionSearch(e.target.value)}
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    padding: '0.5rem 2.5rem 0.5rem 0.85rem',
+                    border: '1px solid #cbd5e1', borderRadius: '6px',
+                    fontSize: '0.875rem', outline: 'none',
+                  }}
+                />
+                {versionSearch && (
+                  <button
+                    onClick={() => setVersionSearch('')}
+                    style={{
+                      position: 'absolute', right: '0.6rem', top: '50%',
+                      transform: 'translateY(-50%)', background: 'none',
+                      border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '1rem',
+                    }}
+                  >✕</button>
+                )}
+              </div>
+            )}
+
             {versions.length === 0 ? (
               <div className="empty-state">
                 <p>Sin versiones aún. Crea categorías primero.</p>
               </div>
-            ) : (
-              <div className="table-container">
-                <table className="library-table">
-                  <thead>
-                    <tr>
-                      <th>Nombre</th>
-                      <th>Plataforma</th>
-                      <th>Categoría</th>
-                      <th>Duración</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {versions.map((v, idx) => (
-                      <tr key={`${v.id}-${idx}`}>
-                        <td>{v.name}</td>
-                        <td>{getPlatformName(v.platformId)}</td>
-                        <td>
-                          {v.duration
-                            ? `${getCategoryName(v.categoryId)} (${v.duration}min)`
-                            : getCategoryName(v.categoryId)}
-                        </td>
-                        <td>{v.duration ? `${v.duration} min` : 'N/A'}</td>
-                        <td className="actions">
-                          <button
-                            className="btn-icon btn-edit"
-                            onClick={() => {
-                              setEditingId(v.id);
-                              setFormData(v);
-                              setShowForm(true);
-                            }}
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            className="btn-icon btn-delete"
-                            onClick={() => handleDeleteVersion(v.id)}
-                          >
-                            🗑️
-                          </button>
-                        </td>
+            ) : (() => {
+              const filtered = versionSearch.trim()
+                ? versions.filter((v) => v.name?.toLowerCase().includes(versionSearch.trim().toLowerCase()))
+                : versions;
+              return filtered.length === 0 ? (
+                <div className="empty-state">
+                  <p>No se encontró ninguna versión con <strong>"{versionSearch}"</strong>.</p>
+                </div>
+              ) : (
+                <div className="table-container">
+                  <table className="library-table">
+                    <thead>
+                      <tr>
+                        <th>Nombre</th>
+                        <th>Lógica</th>
+                        <th>Categoría</th>
+                        <th>Duración</th>
+                        <th>Acciones</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody>
+                      {filtered.map((v, idx) => (
+                        <tr key={`${v.id}-${idx}`}>
+                          <td>{v.name}</td>
+                          <td><code style={{ fontSize: '0.8rem' }}>{platforms.find((p) => p.id === v.platformId)?.logica || 'N/A'}</code></td>
+                          <td>
+                            {v.duration
+                              ? `${getCategoryName(v.categoryId)} (${v.duration}min)`
+                              : getCategoryName(v.categoryId)}
+                          </td>
+                          <td>{v.duration ? `${v.duration} min` : 'N/A'}</td>
+                          <td className="actions">
+                            <button
+                              className="btn-icon btn-edit"
+                              onClick={() => {
+                                setEditingId(v.id);
+                                setFormData(v);
+                                setShowForm(true);
+                              }}
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              className="btn-icon btn-delete"
+                              onClick={() => handleDeleteVersion(v.id)}
+                            >
+                              🗑️
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 
