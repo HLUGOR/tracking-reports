@@ -221,7 +221,7 @@ function EditorReportsView() {
                     <td style={{ padding: '0.5rem 1rem', fontWeight: 500 }}>{ed.editor}</td>
                     {reportData.platforms.map((p) => (
                       <td key={p} style={{ padding: '0.5rem 0.75rem', textAlign: 'center', color: ed.byPlatform[p] ? '#1e3a8a' : '#cbd5e1' }}>
-                        {ed.byPlatform[p]?.count || 'â€”'}
+                        {ed.byPlatform[p]?.count || 0}
                       </td>
                     ))}
                     <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: 600 }}>{ed.totalCount}</td>
