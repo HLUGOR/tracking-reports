@@ -1,4 +1,4 @@
-﻿/**
+/**
  * EditorReportsView.jsx - Vista de reportes por editor (cross-platform)
  * Usa PlatformReportsEngine para procesar los datos reales y pivota
  * el resultado para una vista centrada en el editor.
