@@ -2,7 +2,7 @@
 
 **Fecha:** 2 de abril de 2026  
 **Proyecto:** TrackingReports Standalone  
-**URL actual:** https://hlugor.github.io/tracking-reports
+**URL actual:** https://hlugor.github.io/Tracking_Report
 
 ---
 
@@ -25,10 +25,10 @@
 cd C:\Users\TU_USUARIO\Desktop
 
 # Clona el repo actual (copia todo el código)
-git clone https://github.com/HLUGOR/tracking-reports.git
+git clone https://github.com/HLUGOR/Tracking_Report.git
 
 # Entra a la carpeta
-cd tracking-reports
+cd Tracking_Report
 
 # Instala las dependencias (node_modules/)
 npm install
@@ -41,7 +41,7 @@ npm install
 1. Entra a **github.com** con la nueva cuenta
 2. Click en `+` → **New repository**
 3. Configurar:
-   - **Repository name:** `tracking-reports`
+   - **Repository name:** `Tracking_Report`
    - **Public**
    - ❌ Sin README, ❌ Sin .gitignore, ❌ Sin license
 4. Click **Create repository**
@@ -52,11 +52,11 @@ npm install
 
 ```bash
 # Cambiar la URL del remote origin a la nueva cuenta
-git remote set-url origin https://github.com/OTROUSUARIO/tracking-reports.git
+git remote set-url origin https://github.com/OTROUSUARIO/Tracking_Report.git
 
 # Verificar que cambió correctamente
 git remote -v
-# Debe mostrar: origin  https://github.com/OTROUSUARIO/tracking-reports.git
+# Debe mostrar: origin  https://github.com/OTROUSUARIO/Tracking_Report.git
 ```
 
 ---
@@ -67,12 +67,12 @@ Abre `package.json` y cambia la línea `homepage`:
 
 ```json
 {
-  "homepage": "https://otrousuario.github.io/tracking-reports"
+  "homepage": "https://otrousuario.github.io/Tracking_Report"
 }
 ```
 
 > ⚠️ El username en la URL DEBE estar en minúsculas aunque en GitHub aparezca en mayúsculas.
-> Ejemplo: si el usuario es `OTROUSUARIO`, la URL es `https://otrousuario.github.io/tracking-reports`
+> Ejemplo: si el usuario es `OTROUSUARIO`, la URL es `https://otrousuario.github.io/Tracking_Report`
 
 ---
 
@@ -92,13 +92,13 @@ npm run deploy
 
 #### PASO 6 - Activar GitHub Pages en Settings
 
-1. Ve a: `https://github.com/OTROUSUARIO/tracking-reports/settings/pages`
+1. Ve a: `https://github.com/OTROUSUARIO/Tracking_Report/settings/pages`
 2. **Source:** Deploy from a branch
 3. **Branch:** `gh-pages` → `/ (root)`
 4. Click **Save**
 5. Esperar 1-2 minutos
 
-**✅ App funcionando en:** `https://otrousuario.github.io/tracking-reports`
+**✅ App funcionando en:** `https://otrousuario.github.io/Tracking_Report`
 
 ---
 
@@ -108,7 +108,7 @@ npm run deploy
 [ ] git clone del repo original
 [ ] npm install
 [ ] Crear repo en la nueva cuenta de GitHub
-[ ] git remote set-url origin https://github.com/NUEVOUSUARIO/tracking-reports.git
+[ ] git remote set-url origin https://github.com/NUEVOUSUARIO/Tracking_Report.git
 [ ] Actualizar "homepage" en package.json
 [ ] git push -u origin master
 [ ] npm run deploy
@@ -123,7 +123,7 @@ npm run deploy
 ### ✅ LO QUE SÍ SE SUBE (está en Git)
 
 ```
-tracking-reports/
+Tracking_Report/
 ├── src/                    ✅ TODO el código fuente
 │   ├── components/         ✅ Componentes React
 │   ├── core/               ✅ Módulos de lógica
@@ -146,7 +146,7 @@ tracking-reports/
 ### ❌ LO QUE NO SE SUBE (bloqueado por .gitignore)
 
 ```
-tracking-reports/
+Tracking_Report/
 ├── node_modules/           ❌ 1,500+ paquetes (se regenera con npm install)
 ├── build/                  ❌ La compilación (se regenera con npm run build)
 ├── .env                    ❌ Variables de entorno con valores reales
@@ -298,7 +298,7 @@ function App() {
 | Abrir un Pull Request | Cualquier usuario de GitHub (tú decides si aceptas) |
 
 Para agregar colaboradores que puedan pushear:
-1. Ve a `https://github.com/HLUGOR/tracking-reports/settings/access`
+1. Ve a `https://github.com/HLUGOR/Tracking_Report/settings/access`
 2. Click **Add people**
 3. Escribe el username del colaborador
 4. Selecciona el rol (Write/Maintain/Admin)
@@ -318,7 +318,7 @@ DATOS DEL USUARIO (Excel cargado)
   └── Visible para otros: NUNCA
 
 LA APP EN INTERNET
-  ├── URL pública: https://hlugor.github.io/tracking-reports
+  ├── URL pública: https://hlugor.github.io/Tracking_Report
   ├── Accesible: Cualquier persona con el link
   └── Autenticación: Ninguna (por diseño standalone)
 ```
@@ -329,8 +329,8 @@ LA APP EN INTERNET
 
 ```bash
 # ─── CLONAR EN NUEVA MÁQUINA ───────────────────────────────
-git clone https://github.com/HLUGOR/tracking-reports.git
-cd tracking-reports
+git clone https://github.com/HLUGOR/Tracking_Report.git
+cd Tracking_Report
 npm install
 npm start
 
@@ -343,7 +343,7 @@ git push origin master
 npm run deploy                     # Publicar cambios en GitHub Pages
 
 # ─── REPLICAR EN NUEVA CUENTA ──────────────────────────────
-git remote set-url origin https://github.com/NUEVOUSUARIO/tracking-reports.git
+git remote set-url origin https://github.com/NUEVOUSUARIO/Tracking_Report.git
 # Editar homepage en package.json
 git push -u origin master
 npm run deploy
@@ -361,10 +361,10 @@ git remote -v                      # Ver URL del remote
 
 | Recurso | URL |
 |---------|-----|
-| App en vivo | https://hlugor.github.io/tracking-reports |
-| Código fuente | https://github.com/HLUGOR/tracking-reports |
-| Settings Pages | https://github.com/HLUGOR/tracking-reports/settings/pages |
-| Colaboradores | https://github.com/HLUGOR/tracking-reports/settings/access |
+| App en vivo | https://hlugor.github.io/Tracking_Report |
+| Código fuente | https://github.com/HLUGOR/Tracking_Report |
+| Settings Pages | https://github.com/HLUGOR/Tracking_Report/settings/pages |
+| Colaboradores | https://github.com/HLUGOR/Tracking_Report/settings/access |
 
 ---
 

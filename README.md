@@ -27,8 +27,8 @@
 
 ```bash
 # Clonar repositorio
-git clone https://github.com/tuusuario/tracking-reports.git
-cd tracking-reports
+git clone https://github.com/tuusuario/Tracking_Report.git
+cd Tracking_Report
 
 # Instalar dependencias
 npm install
@@ -58,7 +58,7 @@ Ver carpeta `/docs/`:
 ## 🏗️ Estructura de Carpetas
 
 ```
-tracking-reports/
+Tracking_Report/
 ├── src/
 │   ├── core/              # Lógica sin UI
 │   │   ├── excel/         # Parsing y validación
@@ -169,7 +169,7 @@ npm test -- --coverage
 
 ## 📞 Soporte y Feedback
 
-Para reportar bugs o sugerir features, abre un [GitHub Issue](https://github.com/tuusuario/tracking-reports/issues)
+Para reportar bugs o sugerir features, abre un [GitHub Issue](https://github.com/tuusuario/Tracking_Report/issues)
 
 ## 📄 Licencia
 
