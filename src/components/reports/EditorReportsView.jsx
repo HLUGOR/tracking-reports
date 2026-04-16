@@ -454,7 +454,7 @@ function EditorReportsView() {
                               gap: '8px',
                               justifyContent: 'center'
                             }}>
-                              {/* Barra bicolor: verde hasta 70%, rojo a partir de 70% */}
+                              {/* Barra tricolor: azul (0-70%), naranja (70-80%), rojo (80%+) */}
                               <div style={{ 
                                 width: '100px', 
                                 height: '14px', 
@@ -464,29 +464,41 @@ function EditorReportsView() {
                                 flexShrink: 0,
                                 position: 'relative'
                               }}>
-                                {/* Parte verde (hasta 70% o hasta el valor si es menor) */}
+                                {/* Parte azul (0-70% óptimo) */}
                                 <div style={{
                                   position: 'absolute',
                                   left: 0,
                                   top: 0,
                                   height: '100%',
                                   width: `${Math.min(ed.pctOcupacion, 70)}%`,
-                                  backgroundColor: '#10b981',
+                                  backgroundColor: '#6366f1',
                                   borderRadius: ed.pctOcupacion <= 70 ? '7px' : '7px 0 0 7px'
                                 }}></div>
-                                {/* Parte roja (solo si supera 70%) */}
+                                {/* Parte naranja (70-80% transición) */}
                                 {ed.pctOcupacion > 70 && (
                                   <div style={{
                                     position: 'absolute',
                                     left: '70%',
                                     top: 0,
                                     height: '100%',
-                                    width: `${ed.pctOcupacion - 70}%`,
-                                    backgroundColor: '#ef4444',
+                                    width: `${Math.max(0, Math.min(ed.pctOcupacion - 70, 10))}%`,
+                                    backgroundColor: '#f97316',
+                                    borderRadius: ed.pctOcupacion <= 80 ? '0 7px 7px 0' : '0'
+                                  }}></div>
+                                )}
+                                {/* Parte roja (80%+ sobrecarga) */}
+                                {ed.pctOcupacion > 80 && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: '80%',
+                                    top: 0,
+                                    height: '100%',
+                                    width: `${ed.pctOcupacion - 80}%`,
+                                    backgroundColor: '#dc2626',
                                     borderRadius: '0 7px 7px 0'
                                   }}></div>
                                 )}
-                                {/* Línea marcadora del 70% */}
+                                {/* Líneas marcadoras de 70% y 80% */}
                                 <div style={{
                                   position: 'absolute',
                                   left: '70%',
@@ -496,12 +508,23 @@ function EditorReportsView() {
                                   backgroundColor: '#94a3b8',
                                   zIndex: 1
                                 }}></div>
+                                {ed.pctOcupacion > 70 && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: '80%',
+                                    top: 0,
+                                    width: '1px',
+                                    height: '100%',
+                                    backgroundColor: '#7c3aed',
+                                    zIndex: 1
+                                  }}></div>
+                                )}
                               </div>
                               {/* Texto del porcentaje */}
                               <span style={{ 
                                 fontSize: '0.75rem', 
                                 fontWeight: 700, 
-                                color: ed.pctOcupacion >= 70 ? '#dc2626' : '#059669',
+                                color: ed.pctOcupacion >= 80 ? '#dc2626' : ed.pctOcupacion >= 70 ? '#ea580c' : '#059669',
                                 minWidth: '30px',
                                 textAlign: 'left'
                               }}>
@@ -538,22 +561,29 @@ function EditorReportsView() {
                     labels: editors.map(e => e.editor),
                     datasets: [
                       {
-                        label: '% Ocupación Óptima',
+                        label: '% Óptimo (0-70%)',
                         data: editors.map(e => Math.min(e.pctOcupacion, 70)),
                         backgroundColor: '#6366f1',
                         borderRadius: 4,
                         borderSkipped: false,
                       },
                       {
-                        label: '% Sobrecargado',
-                        data: editors.map(e => e.pctOcupacion > 70 ? e.pctOcupacion - 70 : 0),
+                        label: '% No Óptimo (70-80%)',
+                        data: editors.map(e => Math.max(0, Math.min(e.pctOcupacion - 70, 10))),
                         backgroundColor: '#f97316',
                         borderRadius: 4,
                         borderSkipped: false,
                       },
                       {
+                        label: '% Sobrecarga (≥80%)',
+                        data: editors.map(e => Math.max(0, e.pctOcupacion - 80)),
+                        backgroundColor: '#dc2626',
+                        borderRadius: 4,
+                        borderSkipped: false,
+                      },
+                      {
                         label: '% Free Time',
-                        data: editors.map(e => e.pctFreeTime),
+                        data: editors.map(e => Math.max(0, 100 - e.pctOcupacion)),
                         backgroundColor: '#86efac',
                         borderRadius: 4,
                         borderSkipped: false,
@@ -585,11 +615,19 @@ function EditorReportsView() {
                         <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <div style={{ width: '12px', height: '12px', backgroundColor: '#6366f1', borderRadius: '2px' }}></div>
-                            <span style={{ color: '#475569' }}>Óptimo ({"<"} 70%)</span>
+                            <span style={{ color: '#475569' }}>Óptimo (0-70%)</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <div style={{ width: '12px', height: '12px', backgroundColor: '#f97316', borderRadius: '2px' }}></div>
-                            <span style={{ color: '#475569' }}>Sobrecargado (≥ 70%)</span>
+                            <span style={{ color: '#475569' }}>No Óptimo (70-80%)</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '12px', height: '12px', backgroundColor: '#dc2626', borderRadius: '2px' }}></div>
+                            <span style={{ color: '#475569' }}>Sobrecargado (≥80%)</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '12px', height: '12px', backgroundColor: '#86efac', borderRadius: '2px' }}></div>
+                            <span style={{ color: '#475569' }}>Free Time</span>
                           </div>
                         </div>
                       </div>
