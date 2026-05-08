@@ -457,7 +457,7 @@ class PlatformReportsEngine {
 
         let hours = 0;
         if (logica === 'logica_comerciales') {
-          hours = ((ed.totalSeconds || 0) / 3600) * platformEffortRate;
+          hours = (ed.totalCount || 0) * platformEffortRate;
         } else if (logica === 'logica_bp_i') {
           hours = ((ed.totalMinutes || 0) / 60) * platformEffortRate;
         } else if (logica === 'logica_youtube') {

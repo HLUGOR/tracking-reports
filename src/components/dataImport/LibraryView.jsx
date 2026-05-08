@@ -101,11 +101,8 @@ function LibraryView() {
       return;
     }
 
-    // Crear la plataforma nueva y obtener su id
+    // Crear la plataforma nueva
     libraryStore.getState().addPlatform(normalizedData);
-    const newPlatform = libraryStore.getState().platforms.find(
-      (p) => p.name === formData.name && p.logica === formData.logica
-    );
 
     setShowForm(false);
     setFormData({});
@@ -126,12 +123,6 @@ function LibraryView() {
   };
 
   // ===== CATEGORÍAS =====
-  const handleAddCategory = () => {
-    setEditingId(null);
-    setFormData({ platformId: platforms[0]?.id || null });
-    setShowForm(true);
-  };
-
   const handleSaveCategory = () => {
     if (!formData.name || !formData.platformId) return;
 

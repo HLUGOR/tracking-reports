@@ -123,28 +123,71 @@ const libraryStore = create(
         getAllColumnMappings: () => get().columnMappings,
         
         // ===== SINCRONIZACIÓN =====
-        importLibraryData: (data) =>
-          set({
-            platforms: data.platforms || [],
+        importLibraryData: (data) => {
+          // Validar e importar con estructura correcta
+          const platforms = (data.platforms || []).map(p => ({
+            ...p,
+            // Asegurar que categorias sea un array con estructura completa
+            categorias: (p.categorias || []).map(cat => {
+              if (typeof cat === 'string') {
+                return { key: cat, duration: '', effortRate: null };
+              }
+              return {
+                key: cat.key || cat.name || '',
+                duration: cat.duration || '',
+                effortRate: cat.effortRate !== undefined ? cat.effortRate : null,
+              };
+            }),
+          }));
+          
+          return set({
+            platforms,
             categories: data.categories || [],
             versions: data.versions || [],
             columnMappings: data.columnMappings || [],
-          }),
+          });
+        },
         
-        exportLibraryData: () => ({
-          platforms: get().platforms,
-          categories: get().categories,
-          versions: get().versions,
-          columnMappings: get().columnMappings,
-        }),
+        exportLibraryData: () => {
+          // Asegurar que platforms incluyan todas las tasas de esfuerzo en categorias
+          const state = get();
+          return {
+            platforms: state.platforms.map(p => ({
+              ...p,
+              // Asegurar que categorias siempre sea un array con estructura completa
+              categorias: (p.categorias || []).map(cat => ({
+                key: typeof cat === 'string' ? cat : cat.key,
+                duration: typeof cat === 'string' ? '' : cat.duration,
+                effortRate: typeof cat === 'string' ? null : cat.effortRate,
+              })),
+            })),
+            categories: state.categories,
+            versions: state.versions,
+            columnMappings: state.columnMappings,
+            exportedAt: new Date().toISOString(),
+          };
+        },
         
-        clearLibrary: () =>
-          set({
-            platforms: [],
-            categories: [],
-            versions: [],
-            columnMappings: [],
-          }),
+        // Validar y reparar estructuras incompletas de categorias
+        validateAndRepairLibrary: () => {
+          const state = get();
+          const repairedPlatforms = state.platforms.map(p => ({
+            ...p,
+            categorias: (p.categorias || []).map(cat => {
+              if (typeof cat === 'string') {
+                return { key: cat, duration: '', effortRate: null };
+              }
+              return {
+                key: cat.key || cat.name || '',
+                duration: cat.duration !== undefined ? cat.duration : '',
+                effortRate: cat.effortRate !== undefined ? cat.effortRate : null,
+              };
+            }),
+          }));
+          
+          set({ platforms: repairedPlatforms });
+          return repairedPlatforms;
+        },
       }),
       {
         name: 'library-store', // localStorage key
