@@ -194,8 +194,8 @@ function EditorReportsView() {
         });
         const pctCell = row.getCell(groups.length + 3);
         const pct = ed.pctOcupacion;
-        pctCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: pct > 90 ? 'FFFEF2F2' : pct > 70 ? 'FFFFFBEB' : 'FFF0FDF4' } };
-        pctCell.font = { bold: true, color: { argb: pct > 90 ? 'FFB91C1C' : pct > 70 ? 'FFB45309' : 'FF15803D' } };
+        pctCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: pct >= 70 ? 'FFFEF2F2' : 'FFF0FDF4' } };
+        pctCell.font = { bold: true, color: { argb: pct >= 70 ? 'FFB91C1C' : 'FF15803D' } };
         pctCell.value = `${pct}%`;
         const freeCell = row.getCell(groups.length + 4);
         freeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
@@ -284,9 +284,8 @@ function EditorReportsView() {
 
   // ── Helpers de color ───────────────────────────────────────────────────────
   const pctColor = (pct) => {
-    if (pct >= 90) return '#b91c1c';
-    if (pct >= 70) return '#d97706';
-    return '#15803d';
+    if (pct >= 70) return '#b91c1c';  // Rojo a partir del 70%
+    return '#15803d';  // Verde para menos del 70%
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -403,6 +402,9 @@ function EditorReportsView() {
                         <th style={{ padding: '0.75rem 0.85rem', textAlign: 'center', color: '#86efac', fontWeight: 700, whiteSpace: 'nowrap' }}>
                           % Free Time
                         </th>
+                        <th style={{ padding: '0.75rem 0.85rem', textAlign: 'center', color: '#e5e7eb', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          Estado
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -431,7 +433,7 @@ function EditorReportsView() {
                             <span style={{
                               display: 'inline-block', padding: '2px 10px', borderRadius: '12px', fontWeight: 700,
                               fontSize: '0.85rem',
-                              background: ed.pctOcupacion > 90 ? '#fef2f2' : ed.pctOcupacion > 70 ? '#fffbeb' : '#f0fdf4',
+                              background: ed.pctOcupacion >= 70 ? '#fef2f2' : '#f0fdf4',
                               color: pctColor(ed.pctOcupacion),
                             }}>
                               {ed.pctOcupacion}%
@@ -444,6 +446,91 @@ function EditorReportsView() {
                             }}>
                               {ed.pctFreeTime}%
                             </span>
+                          </td>
+                          <td style={{ padding: '0.55rem 0.85rem', textAlign: 'center', minWidth: '140px' }}>
+                            <div style={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: '8px',
+                              justifyContent: 'center'
+                            }}>
+                              {/* Barra tricolor: azul (0-70%), naranja (70-80%), rojo (80%+) */}
+                              <div style={{ 
+                                width: '100px', 
+                                height: '14px', 
+                                background: '#e2e8f0', 
+                                borderRadius: '7px', 
+                                overflow: 'hidden',
+                                flexShrink: 0,
+                                position: 'relative'
+                              }}>
+                                {/* Parte azul (0-70% óptimo) */}
+                                <div style={{
+                                  position: 'absolute',
+                                  left: 0,
+                                  top: 0,
+                                  height: '100%',
+                                  width: `${Math.min(ed.pctOcupacion, 70)}%`,
+                                  backgroundColor: '#6366f1',
+                                  borderRadius: ed.pctOcupacion <= 70 ? '7px' : '7px 0 0 7px'
+                                }}></div>
+                                {/* Parte naranja (70-80% transición) */}
+                                {ed.pctOcupacion > 70 && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: '70%',
+                                    top: 0,
+                                    height: '100%',
+                                    width: `${Math.max(0, Math.min(ed.pctOcupacion - 70, 10))}%`,
+                                    backgroundColor: '#f97316',
+                                    borderRadius: ed.pctOcupacion <= 80 ? '0 7px 7px 0' : '0'
+                                  }}></div>
+                                )}
+                                {/* Parte roja (80%+ sobrecarga) */}
+                                {ed.pctOcupacion > 80 && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: '80%',
+                                    top: 0,
+                                    height: '100%',
+                                    width: `${ed.pctOcupacion - 80}%`,
+                                    backgroundColor: '#dc2626',
+                                    borderRadius: '0 7px 7px 0'
+                                  }}></div>
+                                )}
+                                {/* Líneas marcadoras de 70% y 80% */}
+                                <div style={{
+                                  position: 'absolute',
+                                  left: '70%',
+                                  top: 0,
+                                  width: '1px',
+                                  height: '100%',
+                                  backgroundColor: '#94a3b8',
+                                  zIndex: 1
+                                }}></div>
+                                {ed.pctOcupacion > 70 && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: '80%',
+                                    top: 0,
+                                    width: '1px',
+                                    height: '100%',
+                                    backgroundColor: '#7c3aed',
+                                    zIndex: 1
+                                  }}></div>
+                                )}
+                              </div>
+                              {/* Texto del porcentaje */}
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: 700, 
+                                color: ed.pctOcupacion >= 80 ? '#dc2626' : ed.pctOcupacion >= 70 ? '#ea580c' : '#059669',
+                                minWidth: '30px',
+                                textAlign: 'left'
+                              }}>
+                                {ed.pctOcupacion}%
+                              </span>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -459,7 +546,7 @@ function EditorReportsView() {
                         <td style={{ padding: '0.6rem 0.85rem', textAlign: 'center', color: '#1e293b' }}>
                           {Math.round(reportData.effort.editors.reduce((s, e) => s + e.totalHours, 0) * 10) / 10}
                         </td>
-                        <td colSpan={2} style={{ padding: '0.6rem 0.85rem', textAlign: 'center', color: '#475569', fontSize: '0.8rem' }}>
+                        <td colSpan={3} style={{ padding: '0.6rem 0.85rem', textAlign: 'center', color: '#475569', fontSize: '0.8rem' }}>
                           Promedio por editor
                         </td>
                       </tr>
@@ -474,17 +561,29 @@ function EditorReportsView() {
                     labels: editors.map(e => e.editor),
                     datasets: [
                       {
-                        label: '% Ocupación',
-                        data: editors.map(e => e.pctOcupacion),
-                        backgroundColor: editors.map(e =>
-                          e.pctOcupacion > 90 ? '#ef4444' : e.pctOcupacion > 70 ? '#f59e0b' : '#6366f1'
-                        ),
+                        label: '% Óptimo (0-70%)',
+                        data: editors.map(e => Math.min(e.pctOcupacion, 70)),
+                        backgroundColor: '#6366f1',
+                        borderRadius: 4,
+                        borderSkipped: false,
+                      },
+                      {
+                        label: '% No Óptimo (70-80%)',
+                        data: editors.map(e => Math.max(0, Math.min(e.pctOcupacion - 70, 10))),
+                        backgroundColor: '#f97316',
+                        borderRadius: 4,
+                        borderSkipped: false,
+                      },
+                      {
+                        label: '% Sobrecarga (≥80%)',
+                        data: editors.map(e => Math.max(0, e.pctOcupacion - 80)),
+                        backgroundColor: '#dc2626',
                         borderRadius: 4,
                         borderSkipped: false,
                       },
                       {
                         label: '% Free Time',
-                        data: editors.map(e => e.pctFreeTime),
+                        data: editors.map(e => Math.max(0, 100 - e.pctOcupacion)),
                         backgroundColor: '#86efac',
                         borderRadius: 4,
                         borderSkipped: false,
@@ -509,6 +608,28 @@ function EditorReportsView() {
                       <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1e3a8a', marginBottom: '1rem' }}>📊 Ocupación y Free Time por Editor (base {BASE_HORAS}h)</div>
                       <div style={{ height: Math.max(editors.length * 44, 180) }}>
                         <Bar ref={chartRef} data={barData} options={barOptions} />
+                      </div>
+                      {/* Leyenda de colores para ocupación */}
+                      <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '6px', fontSize: '0.75rem' }}>
+                        <div style={{ fontWeight: 600, color: '#475569', marginBottom: '0.5rem' }}>⚠️ Estándar de ocupación:</div>
+                        <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '12px', height: '12px', backgroundColor: '#6366f1', borderRadius: '2px' }}></div>
+                            <span style={{ color: '#475569' }}>Óptimo (0-70%)</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '12px', height: '12px', backgroundColor: '#f97316', borderRadius: '2px' }}></div>
+                            <span style={{ color: '#475569' }}>No Óptimo (70-80%)</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '12px', height: '12px', backgroundColor: '#dc2626', borderRadius: '2px' }}></div>
+                            <span style={{ color: '#475569' }}>Sobrecargado (≥80%)</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '12px', height: '12px', backgroundColor: '#86efac', borderRadius: '2px' }}></div>
+                            <span style={{ color: '#475569' }}>Free Time</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );
